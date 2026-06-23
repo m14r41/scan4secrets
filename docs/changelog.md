@@ -8,6 +8,18 @@ keywords: [scan4secrets changelog, scan4secrets v2, release notes]
 
 # Changelog
 
+## v2.1.2 — Bundling, normalization, and PoC-friendly defaults
+
+**Breaking:** Secret values are now shown **in full by default** in every output (terminal, CSV, JSON, JSONL, HTML, Excel, PDF, SARIF). The `--unsafe-show` flag is removed and replaced by `--mask`, which inverts the behaviour for screenshots or shared transcripts. Rationale: this tool is used to produce vendor PoCs where the raw value is the proof; redacted-by-default forced an extra flag on every real run.
+
+### Changed
+- **`--mask` flag** replaces `--unsafe-show`. Default is unmasked across the terminal table and every file reporter.
+- **`normalize_url`** accepts every common shape: bare host, host:port, IPv4, IPv4:port, IPv6 `[::1]`, `[::1]:port`, scheme-less paths, accidental `://prefix` typos, whitespace, trailing slashes. `:443` stays HTTPS; other ports and raw IPs default to HTTP. Unsupported schemes (`ftp://`, `ws://`, `file://`) are rejected with a clear error.
+
+### Fixed
+- **PyInstaller binary bundling**: Linux and Windows binaries now ship `scan4secrets/config/rules.yaml` via explicit `--add-data`. Previous `--collect-all` alone did not pick up package-data under `--onefile`, causing `FileNotFoundError: '/tmp/_MEIxxx/scan4secrets/config/rules.yaml'` on first run.
+- **BeautifulSoup XML warning**: `XMLParsedAsHTMLWarning` is silenced at crawler load (`engine/crawler.py`). Non-fatal noise on XML/RSS responses no longer pollutes the terminal.
+
 ## v2.1.0 — DAST defaults + noise reduction
 
 ### Changed

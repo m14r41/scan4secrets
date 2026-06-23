@@ -80,7 +80,7 @@ def _parser() -> argparse.ArgumentParser:
                      choices=["sarif", "json", "jsonl", "csv", "html", "excel", "pdf"])
     out.add_argument("--output", default="scan4secrets-report",
                      help="output base path (extension added per format)")
-    out.add_argument("--unsafe-show", action="store_true", help="include raw secrets in reports (DANGEROUS)")
+    out.add_argument("--mask", action="store_true", help="redact secret values in output (default: show raw values for vendor PoC)")
 
     log = p.add_argument_group("Logging / CI")
     log.add_argument("--quiet", action="store_true")
@@ -135,7 +135,7 @@ def _print_summary(findings, console: Console):
     console.print(tbl)
 
 
-def _print_findings(findings, console: Console):
+def _print_findings(findings, console: Console, *, mask: bool = False):
     if not findings:
         return
     tbl = Table(box=box.SIMPLE, show_lines=False, header_style="bold")
@@ -143,7 +143,7 @@ def _print_findings(findings, console: Console):
     tbl.add_column("Rule", width=28)
     tbl.add_column("V", width=3, justify="center")
     tbl.add_column("Where", overflow="fold")
-    tbl.add_column("Secret (redacted)", overflow="fold")
+    tbl.add_column("Secret (redacted)" if mask else "Secret", overflow="fold")
     style = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan", "info": "dim"}
     for f in findings:
         vmark = "[green]Y[/green]" if f.verified is True else "[dim]-[/dim]" if f.verified is None else "[dim]n[/dim]"
@@ -152,7 +152,7 @@ def _print_findings(findings, console: Console):
             f.rule_id,
             vmark,
             f"{f.file}:{f.line}",
-            f.secret_redacted,
+            f.secret_redacted if mask else f.secret,
         )
     console.print(tbl)
 
@@ -255,13 +255,13 @@ def main(argv=None) -> int:
         verify_findings(findings, rules, timeout=args.verify_timeout)
 
     if not args.quiet:
-        _print_findings(findings, console)
+        _print_findings(findings, console, mask=args.mask)
         _print_summary(findings, console)
 
     if findings:
         out_base = Path(args.output)
         out_base.parent.mkdir(parents=True, exist_ok=True)
-        written = write_reports(findings, out_base, args.report, unsafe_show=args.unsafe_show)
+        written = write_reports(findings, out_base, args.report, unsafe_show=not args.mask)
         if not args.quiet:
             for fmt, p in written.items():
                 console.print(f"[green]+[/] {fmt.upper():6s} -> {p}")

@@ -157,7 +157,7 @@ scan4secrets --path . --report sarif json jsonl csv html excel pdf --output repo
 | `excel` | Pivot tables and exec summaries |
 | `pdf` | Compliance evidence packets |
 
-Secrets are **redacted by default** (`abcd****wxyz`). Use `--unsafe-show` only when reports are stored securely.
+Secrets are shown **in full by default** so reports are paste-ready for vendor PoC. Pass `--mask` to redact to `abcd****wxyz` for screenshots or shared transcripts.
 
 ---
 

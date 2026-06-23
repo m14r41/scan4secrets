@@ -18,8 +18,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse, urldefrag
 
+import warnings
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 try:
     import tldextract
@@ -58,11 +61,34 @@ SKIP_SUFFIXES = (
 )
 
 
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:/.*)?$")
+_IPV6_RE = re.compile(r"^\[[0-9a-fA-F:]+\](?::\d+)?(?:/.*)?$")
+_HOST_PORT_RE = re.compile(r"^[A-Za-z0-9.\-]+:\d+(?:/.*)?$")
+
+
 def normalize_url(url: str) -> str:
-    url = url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
-    return url
+    url = url.strip().rstrip("/")
+    if not url:
+        raise ValueError("empty target")
+
+    if url.startswith("://"):
+        url = url[3:]
+
+    lower = url.lower()
+    if lower.startswith(("http://", "https://")):
+        return url
+
+    if lower.startswith(("ftp://", "file://", "ws://", "wss://")):
+        raise ValueError(f"unsupported scheme in target: {url}")
+
+    if "://" in url:
+        raise ValueError(f"unknown scheme in target: {url}")
+
+    if _IPV4_RE.match(url) or _IPV6_RE.match(url) or _HOST_PORT_RE.match(url):
+        scheme = "https" if re.search(r":443(?:/|$)", url) else "http"
+        return f"{scheme}://{url}"
+
+    return "https://" + url
 
 
 def etld_plus_one(host: str) -> str:

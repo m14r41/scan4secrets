@@ -1,3 +1,3 @@
 """scan4secrets — DAST + SAST secret scanner."""
 
-__version__ = "2.1.1"
+__version__ = "2.1.2"

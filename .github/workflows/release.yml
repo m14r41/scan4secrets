@@ -59,7 +59,9 @@ jobs:
         with: { python-version: '3.12' }
       - run: |
           pip install -r requirements.txt pyinstaller
-          pyinstaller --onefile main.py --name scan4secrets-win-amd64 --collect-all scan4secrets
+          pyinstaller --onefile main.py --name scan4secrets-win-amd64 `
+            --collect-all scan4secrets `
+            --add-data "scan4secrets/config;scan4secrets/config"
       - uses: actions/upload-artifact@v4
         with:
           name: scan4secrets-windows
@@ -74,7 +76,9 @@ jobs:
         with: { python-version: '3.12' }
       - run: |
           pip install -r requirements.txt pyinstaller
-          pyinstaller --onefile main.py --name scan4secrets-linux-amd64 --collect-all scan4secrets
+          pyinstaller --onefile main.py --name scan4secrets-linux-amd64 \
+            --collect-all scan4secrets \
+            --add-data "scan4secrets/config:scan4secrets/config"
       - uses: actions/upload-artifact@v4
         with:
           name: scan4secrets-linux

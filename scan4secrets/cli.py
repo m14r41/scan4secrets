@@ -15,7 +15,11 @@ from collections import Counter
 
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, MofNCompleteColumn
 from rich import box
+
+AUTHOR_LINE = "by m14r41  -  github.com/m14r41"
 
 from scan4secrets import __version__
 from scan4secrets.engine.rules import load_rules
@@ -157,6 +161,23 @@ def _print_findings(findings, console: Console, *, mask: bool = False):
     console.print(tbl)
 
 
+def _print_banner(console: Console) -> None:
+    body = (
+        f"[bold cyan]scan4secrets[/] [dim]v{__version__}[/]\n"
+        "[dim]DAST + SAST secret scanner -- verify findings against vendor APIs[/]\n"
+        f"[dim]{AUTHOR_LINE}[/]"
+    )
+    console.print(Panel(body, box=box.ROUNDED, border_style="cyan", padding=(0, 2)))
+
+
+def _ok(console: Console, msg: str) -> None:
+    console.print(f"[bold green][+][/] {msg}")
+
+
+def _info(console: Console, msg: str) -> None:
+    console.print(f"[bold cyan][*][/] {msg}")
+
+
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
 
@@ -169,10 +190,13 @@ def main(argv=None) -> int:
 
     console = Console(quiet=args.quiet, no_color=args.no_color)
 
+    if not args.quiet:
+        _print_banner(console)
+
     rules = load_rules(args.rules)
     rules = _filter_rules(rules, args.rule_id, args.disable_rule, args.entropy_min)
     if not args.quiet:
-        console.print(f"[bold]scan4secrets v{__version__}[/] — {len(rules)} rules loaded")
+        _ok(console, f"Loaded [bold]{len(rules)}[/] rules" + (f" from [dim]{args.rules}[/]" if args.rules else ""))
 
     findings = []
 
@@ -180,23 +204,34 @@ def main(argv=None) -> int:
         from scan4secrets.engine.scanner import scan_text
         from scan4secrets.engine.rules import KeywordIndex
         idx = KeywordIndex(rules)
+        if not args.quiet:
+            _info(console, "Reading stdin...")
         text = sys.stdin.read()
         findings.extend(scan_text(text, "<stdin>", rules, idx))
+        if not args.quiet:
+            _ok(console, f"stdin scanned ({len(text)} bytes)")
 
     if args.path:
         if not args.quiet:
-            console.print(f"[bold cyan]SAST[/] scanning {args.path}")
+            _info(console, f"[bold]SAST[/] scanning [bold]{args.path}[/]")
         exclude_dirs = DEFAULT_SKIP_DIRS | set(args.exclude_dir)
+        before = len(findings)
         findings.extend(scan_path(
             Path(args.path), rules,
             exclude_dirs=exclude_dirs,
             exclude_globs=args.exclude,
             max_bytes=_parse_size(args.max_size),
         ))
+        if not args.quiet:
+            _ok(console, f"SAST complete -- [bold]{len(findings) - before}[/] raw findings")
 
     if args.url:
+        target = normalize_url(args.url)
         if not args.quiet:
-            console.print(f"[bold cyan]DAST[/] crawling {args.url}")
+            _info(console, f"[bold]DAST[/] target: [bold]{target}[/]")
+            _info(console, f"threads={args.threads}  max_urls={args.max_urls}  max_depth={args.max_depth}  timeout={args.timeout}s"
+                  + ("  [yellow]proxy=" + args.proxy + "[/]" if args.proxy else "")
+                  + ("  [yellow]insecure-tls[/]" if args.insecure else ""))
         session = build_session(
             user_agent=args.user_agent or None,
             headers=_parse_headers(args.header),
@@ -209,18 +244,20 @@ def main(argv=None) -> int:
         if args.no_wordlist:
             scope_label = "disabled"
         elif args.wordlist:
-            extra_seeds = seed_urls_from_files(normalize_url(args.url), args.wordlist)
+            extra_seeds = seed_urls_from_files(target, args.wordlist)
             scope_label = f"user:{','.join(args.wordlist)}"
         elif args.wordlist_only:
-            extra_seeds = seed_urls_from_wordlists(normalize_url(args.url), only=args.wordlist_only)
+            extra_seeds = seed_urls_from_wordlists(target, only=args.wordlist_only)
             scope_label = f"bundled:{','.join(args.wordlist_only)}"
         else:
-            extra_seeds = seed_urls_from_wordlists(normalize_url(args.url))
+            extra_seeds = seed_urls_from_wordlists(target)
             scope_label = "bundled:all"
         if not args.quiet and not args.no_wordlist:
-            console.print(f"[dim]wordlist ({scope_label}) seeded {len(extra_seeds)} candidate URLs[/]")
-        findings.extend(crawl_and_scan(
-            normalize_url(args.url), rules,
+            _ok(console, f"Wordlist [bold]{scope_label}[/] seeded [bold]{len(extra_seeds)}[/] candidate URLs")
+
+        before = len(findings)
+        crawl_kwargs = dict(
+            rules=rules,
             session=session,
             max_urls=args.max_urls,
             max_depth=args.max_depth,
@@ -230,7 +267,31 @@ def main(argv=None) -> int:
             parse_sourcemaps=not args.no_sourcemaps,
             extract_js_endpoints=not args.no_js_endpoints,
             extra_seeds=extra_seeds,
-        ))
+        )
+
+        if args.quiet:
+            findings.extend(crawl_and_scan(target, **crawl_kwargs))
+        else:
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[bold cyan][+][/] Crawling"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TextColumn("[dim]URLs[/]"),
+                TimeElapsedColumn(),
+                console=console,
+                transient=True,
+            )
+            with progress:
+                task = progress.add_task("crawl", total=args.max_urls)
+                last_url = {"u": ""}
+
+                def _cb(url: str) -> None:
+                    last_url["u"] = url
+                    progress.advance(task)
+
+                findings.extend(crawl_and_scan(target, progress_cb=_cb, **crawl_kwargs))
+            _ok(console, f"DAST complete -- [bold]{len(findings) - before}[/] raw findings")
 
     # dedupe across SAST + DAST
     seen = set()
@@ -240,6 +301,8 @@ def main(argv=None) -> int:
             continue
         seen.add(f.dedup_key())
         deduped.append(f)
+    if len(deduped) < len(findings) and not args.quiet:
+        _ok(console, f"Deduplication: {len(findings)} -> [bold]{len(deduped)}[/] unique")
     findings = deduped
 
     # noise reduction: suppress generic rules when a specific vendor rule fired on the same value
@@ -247,12 +310,16 @@ def main(argv=None) -> int:
         before = len(findings)
         findings = suppress_generic_when_specific(findings)
         if before > len(findings) and not args.quiet:
-            console.print(f"[dim]suppressed {before - len(findings)} generic-rule duplicates[/]")
+            _ok(console, f"Suppressed [bold]{before - len(findings)}[/] generic-rule duplicates")
 
     if args.verify and findings:
+        verifiable = sum(1 for f in findings if any(r.id == f.rule_id and r.verify for r in rules))
         if not args.quiet:
-            console.print(f"[bold]Verifying[/] {sum(1 for f in findings if any(r.id == f.rule_id and r.verify for r in rules))} candidates...")
+            _info(console, f"Verifying [bold]{verifiable}[/] candidates against vendor APIs...")
         verify_findings(findings, rules, timeout=args.verify_timeout)
+        if not args.quiet:
+            verified = sum(1 for f in findings if f.verified is True)
+            _ok(console, f"Verified [bold green]{verified}[/]/[bold]{verifiable}[/] live")
 
     if not args.quiet:
         _print_findings(findings, console, mask=args.mask)
@@ -261,12 +328,14 @@ def main(argv=None) -> int:
     if findings:
         out_base = Path(args.output)
         out_base.parent.mkdir(parents=True, exist_ok=True)
+        if not args.quiet:
+            _info(console, f"Writing reports: [bold]{' '.join(args.report)}[/] -> [dim]{out_base}.*[/]")
         written = write_reports(findings, out_base, args.report, unsafe_show=not args.mask)
         if not args.quiet:
             for fmt, p in written.items():
-                console.print(f"[green]+[/] {fmt.upper():6s} -> {p}")
+                _ok(console, f"{fmt.upper():6s} -> [bold]{p}[/]")
     elif not args.quiet:
-        console.print("[green]No secrets found.[/]")
+        _ok(console, "[bold green]No secrets found.[/]")
 
     if args.fail_on and any(severity_at_least(f.severity, args.fail_on) for f in findings):
         return 1

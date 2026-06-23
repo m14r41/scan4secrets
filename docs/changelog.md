@@ -8,6 +8,13 @@ keywords: [scan4secrets changelog, scan4secrets v2, release notes]
 
 # Changelog
 
+## v2.1.3 — Branded banner + live crawl progress
+
+### Added
+- **Startup banner** with byline `by m14r41 - github.com/m14r41` printed inside a rounded panel.
+- **`[+]` / `[*]` status markers** for every stage: rules loaded, SAST scan start/end, DAST target, threads/max_urls/timeout, wordlist seeding, deduplication, generic suppression, verification, report writes.
+- **Live DAST progress bar** (spinner + `M/N URLs` counter + elapsed time) driven by the existing `progress_cb` hook in `crawl_and_scan`. Auto-suppressed under `--quiet`.
+
 ## v2.1.2 — Bundling, normalization, and PoC-friendly defaults
 
 **Breaking:** Secret values are now shown **in full by default** in every output (terminal, CSV, JSON, JSONL, HTML, Excel, PDF, SARIF). The `--unsafe-show` flag is removed and replaced by `--mask`, which inverts the behaviour for screenshots or shared transcripts. Rationale: this tool is used to produce vendor PoCs where the raw value is the proof; redacted-by-default forced an extra flag on every real run.

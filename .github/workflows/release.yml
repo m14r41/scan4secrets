@@ -2,63 +2,125 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write    # needed to create the GitHub Release
+  packages: write    # needed to push the Docker image to GHCR
+  id-token: write    # needed for PyPI Trusted Publishing (when configured)
 
 jobs:
-  build-linux:
-    name: Build Linux DEB
+  # ---------- Build the Python distribution ----------
+  build-dist:
+    name: Build wheel and sdist
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install --upgrade pip build
+      - run: python -m build
+      - run: ls -la dist/
+      - uses: actions/upload-artifact@v4
         with:
-          python-version: '3.10'
+          name: scan4secrets-dist
+          path: dist/*
 
-      - name: Install Dependencies
-        run: pip install -r requirements.txt
-
-      - name: Build .deb Package
-        run: |
-          mkdir -p output/linux
-          fpm -s python -t deb -n scan4secrets --prefix=/usr/local .
-
-      - name: Upload Linux Artifact
-        uses: actions/upload-artifact@v4
+  # ---------- Publish to PyPI ----------
+  pypi-publish:
+    name: Publish to PyPI
+    needs: build-dist
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/scan4secrets/
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: scan4secrets-dist, path: dist }
+      - name: Publish to PyPI (Trusted Publishing / OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          name: scan4secrets-linux
-          path: output/linux/*.deb
-          if-no-files-found: error
+          # No `password:` here. OIDC short-lived token is minted from
+          # `id-token: write` and verified by PyPI against the Trusted
+          # Publisher configured for this repo + workflow + environment.
+          # See: https://docs.pypi.org/trusted-publishers/
+          skip-existing: true
+          print-hash: true
 
-  build-windows:
-    name: Build Windows EXE
+  # ---------- Build prebuilt binaries ----------
+  windows-binary:
+    name: Windows x64 binary
     runs-on: windows-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Dependencies
-        run: pip install -r requirements.txt pyinstaller
-
-      - name: Build .exe
-        run: |
-          pyinstaller --onefile src/main.py --name scan4secrets
-          mkdir output\windows
-          move dist\scan4secrets.exe output\windows\
-
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          pip install -r requirements.txt pyinstaller
+          pyinstaller --onefile main.py --name scan4secrets-win-amd64 --collect-all scan4secrets
+      - uses: actions/upload-artifact@v4
         with:
           name: scan4secrets-windows
-          path: output/windows/scan4secrets.exe
-          if-no-files-found: error
+          path: dist/scan4secrets-win-amd64.exe
+
+  linux-binary:
+    name: Linux amd64 binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          pip install -r requirements.txt pyinstaller
+          pyinstaller --onefile main.py --name scan4secrets-linux-amd64 --collect-all scan4secrets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan4secrets-linux
+          path: dist/scan4secrets-linux-amd64
+
+  # ---------- Push container image to GHCR ----------
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+
+  # ---------- Attach everything to a GitHub Release ----------
+  github-release:
+    name: Create GitHub Release
+    needs: [build-dist, windows-binary, linux-binary]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Compute SHA256 checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.whl' -o -name '*.tar.gz' -o -name 'scan4secrets-*' \) \
+            -exec sha256sum {} \; > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/scan4secrets-dist/*
+            artifacts/scan4secrets-windows/*
+            artifacts/scan4secrets-linux/*
+            artifacts/SHA256SUMS

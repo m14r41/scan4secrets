@@ -1,0 +1,108 @@
+# AWS
+.aws/credentials
+.aws/config
+.aws/cli/cache
+aws-config
+aws.credentials
+aws_credentials
+aws-credentials.json
+aws_config.json
+amplify/.config
+amplify/team-provider-info.json
+amplify/backend/amplify-meta.json
+sam-config.toml
+samconfig.toml
+serverless.yml
+serverless.yaml
+serverless.json
+.serverless/
+.serverless/cloudformation-template-create-stack.json
+.serverless/cloudformation-template-update-stack.json
+.serverless/serverless-state.json
+cdk.json
+cdk.out/
+
+# AWS metadata service paths (SSRF target — informational only)
+latest/meta-data/
+latest/meta-data/iam/security-credentials/
+latest/meta-data/identity-credentials/
+latest/user-data/
+latest/dynamic/instance-identity/document
+
+# GCP
+gcp-credentials.json
+gcp-key.json
+service-account.json
+service-account-key.json
+service_account.json
+key.json
+keyfile.json
+gcloud/credentials.db
+gcloud/application_default_credentials.json
+.config/gcloud/credentials.db
+.config/gcloud/legacy_credentials
+.config/gcloud/access_tokens.db
+firebase-adminsdk.json
+firebase-service-account.json
+
+# Azure
+.azure/credentials
+.azure/azureProfile.json
+.azure/clouds.config
+.azure/config
+azureauth.properties
+publishsettings.xml
+
+# Terraform
+.terraform/
+.terraform/terraform.tfstate
+.terraform.tfstate.lock.info
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfvars
+terraform.tfvars.json
+.terraformrc
+terraform.rc
+.terraform-cache
+secrets.tfvars
+secrets.tfvars.json
+prod.tfvars
+dev.tfvars
+staging.tfvars
+
+# Pulumi
+Pulumi.yaml
+Pulumi.dev.yaml
+Pulumi.prod.yaml
+Pulumi.staging.yaml
+.pulumi/
+
+# Ansible
+hosts
+inventory
+inventory.ini
+ansible.cfg
+playbook.yml
+playbooks/
+group_vars/all.yml
+group_vars/all/vault.yml
+host_vars/
+vault_pass.txt
+.vault_pass
+.ansible-vault
+
+# Vagrant
+Vagrantfile
+.vagrant/
+
+# Cloudflare
+.wrangler
+wrangler.toml
+
+# CLI configs for various clouds
+.config/doctl
+.linode-cli
+.civo.json
+.boto
+.s3cfg
+.tugboat

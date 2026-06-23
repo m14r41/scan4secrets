@@ -1,0 +1,11 @@
+{
+  "label": "Vendor Targets",
+  "position": 10,
+  "collapsible": true,
+  "collapsed": false,
+  "link": {
+    "type": "generated-index",
+    "title": "Vendor Targets",
+    "description": "Per-vendor coverage in scan4secrets: token formats, detection rules, live-verification probes, and revocation guides."
+  }
+}

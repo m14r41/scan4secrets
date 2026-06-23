@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scan4secrets"
+version = "2.1.0"
+description = "DAST + SAST secret scanner with live verification, source-map parsing, and CI-native reporting"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "M14R41" }]
+keywords = ["security", "secrets", "scanner", "sast", "dast", "credentials", "bug-bounty"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Information Technology",
+  "Intended Audience :: System Administrators",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: System :: Monitoring",
+]
+dependencies = [
+  "requests>=2.31",
+  "beautifulsoup4>=4.12",
+  "PyYAML>=6.0",
+  "pyahocorasick>=2.0",
+  "rich>=13.0",
+  "colorama>=0.4",
+  "pandas>=2.0",
+  "openpyxl>=3.1",
+  "fpdf2>=2.7",
+  "tldextract>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4", "mypy>=1.8"]
+
+[project.scripts]
+scan4secrets = "scan4secrets.cli:main"
+
+[project.urls]
+Homepage      = "https://scan4secrets.m14r41.in"
+Documentation = "https://scan4secrets.m14r41.in/docs/intro"
+Repository    = "https://github.com/m14r41/scan4secrets"
+Issues        = "https://github.com/m14r41/scan4secrets/issues"
+Changelog     = "https://scan4secrets.m14r41.in/docs/changelog"
+Downloads     = "https://github.com/m14r41/scan4secrets/releases"
+
+[tool.setuptools.packages.find]
+include = ["scan4secrets*"]
+
+[tool.setuptools.package-data]
+scan4secrets = ["config/*.yaml", "config/*.json", "config/wordlist/*.txt"]

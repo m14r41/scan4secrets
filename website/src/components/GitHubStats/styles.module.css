@@ -1,0 +1,66 @@
+.wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: var(--ifm-navbar-link-color);
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.wrapper:hover {
+  color: var(--ifm-color-primary-light);
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.35);
+  text-decoration: none;
+}
+
+[data-theme='light'] .wrapper {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.ghIcon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mini {
+  width: 14px;
+  height: 14px;
+  opacity: 0.85;
+}
+
+.count {
+  min-width: 18px;
+  text-align: left;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 996px) {
+  .wrapper {
+    padding: 8px 12px;
+    width: 100%;
+    justify-content: flex-start;
+    border-radius: 6px;
+  }
+  .ghIcon {
+    width: 20px;
+    height: 20px;
+  }
+}

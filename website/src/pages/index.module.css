@@ -1,0 +1,246 @@
+.hero {
+  position: relative;
+  padding: 5.5rem 0 4rem;
+  overflow: hidden;
+  text-align: center;
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(245, 158, 11, 0.18) 0%, transparent 70%),
+    radial-gradient(40% 30% at 80% 20%, rgba(220, 38, 38, 0.12) 0%, transparent 70%),
+    var(--ifm-background-color);
+}
+
+.heroGlow {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle at 50% 0%, rgba(251, 191, 36, 0.08) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.heroBadge {
+  display: inline-block;
+  padding: 6px 14px;
+  margin-bottom: 1.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ifm-color-primary-light);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 999px;
+}
+
+.heroTitle {
+  font-size: clamp(2.1rem, 5vw, 3.6rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0 0 1.25rem;
+}
+
+.accent {
+  background: linear-gradient(90deg, #fbbf24, #f59e0b, #dc2626);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.heroSub {
+  font-size: clamp(1rem, 1.6vw, 1.25rem);
+  color: var(--s4s-text-muted);
+  max-width: 740px;
+  margin: 0 auto 2.25rem;
+}
+
+.heroCtaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  justify-content: center;
+  margin-bottom: 2.5rem;
+}
+
+.ctaPrimary {
+  background: linear-gradient(180deg, #f59e0b, #d97706);
+  border: none;
+  color: #1f1300;
+  font-weight: 700;
+}
+.ctaPrimary:hover { color: #1f1300; filter: brightness(1.05); }
+
+.ctaSecondary { font-weight: 600; }
+
+.ctaGhost {
+  background: transparent;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--ifm-color-primary-light);
+  font-weight: 600;
+}
+.ctaGhost:hover { background: rgba(245, 158, 11, 0.08); color: var(--ifm-color-primary-light); }
+
+.installBox {
+  max-width: 760px;
+  margin: 0 auto;
+  background: var(--s4s-bg-panel);
+  border: 1px solid var(--s4s-border);
+  border-radius: 12px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.installTabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.installTab {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--ifm-color-primary-lighter);
+  border-radius: 6px 6px 0 0;
+}
+.installTabAlt {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--s4s-text-muted);
+}
+
+.installCmd {
+  margin: 0;
+  padding: 14px 18px;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 13px;
+  line-height: 1.65;
+  border-radius: 0;
+  overflow-x: auto;
+}
+.installCmd code { background: transparent; padding: 0; }
+
+/* Sections */
+.sectionTitle {
+  text-align: center;
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+.sectionSub {
+  text-align: center;
+  color: var(--s4s-text-muted);
+  margin-bottom: 2.5rem;
+}
+
+/* Stats band */
+.statsBand {
+  padding: 2.5rem 0;
+  background: linear-gradient(0deg, rgba(245, 158, 11, 0.05), transparent);
+  border-top: 1px solid var(--s4s-border);
+  border-bottom: 1px solid var(--s4s-border);
+}
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  text-align: center;
+}
+.stat { padding: 0.5rem; }
+.statN {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 800;
+  color: var(--ifm-color-primary-light);
+}
+.statL { color: var(--s4s-text-muted); font-size: 0.95rem; }
+
+@media (max-width: 720px) {
+  .statsGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Compare table */
+.compareSection { padding: 4rem 0; }
+.tableWrap {
+  overflow-x: auto;
+  border-radius: 14px;
+  border: 1px solid var(--s4s-border);
+  background: var(--s4s-bg-panel);
+}
+.compareTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+.compareTable th, .compareTable td {
+  padding: 14px 18px;
+  text-align: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+.compareTable tbody tr:last-child td { border-bottom: none; }
+.compareTable tbody tr {
+  transition: background-color 140ms ease;
+}
+.compareTable tbody tr:hover {
+  background: rgba(245, 158, 11, 0.04);
+}
+.compareTable thead th {
+  background: rgba(245, 158, 11, 0.08);
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--ifm-color-primary-lighter);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.thLabel {
+  text-align: left !important;
+  min-width: 280px;
+}
+.tdLabel {
+  text-align: left !important;
+  font-weight: 600;
+  color: #e2e8f0;
+  font-size: 0.96rem;
+  min-width: 280px;
+}
+.compareTable .us { color: var(--ifm-color-primary-light); }
+.yesCell, .noCell {
+  font-weight: 600;
+}
+.pillYes, .pillNo {
+  display: inline-block;
+  min-width: 44px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.pillYes {
+  color: #064e3b;
+  background: #34d399;
+}
+.pillNo {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+@media (max-width: 768px) {
+  .thLabel, .tdLabel {
+    min-width: 200px;
+  }
+  .compareTable th, .compareTable td {
+    padding: 10px 12px;
+  }
+}
+
+/* CTA section */
+.ctaSection {
+  padding: 4.5rem 0 5.5rem;
+  text-align: center;
+  background:
+    radial-gradient(50% 50% at 50% 50%, rgba(245, 158, 11, 0.12) 0%, transparent 70%),
+    var(--ifm-background-color);
+}

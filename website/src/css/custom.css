@@ -1,0 +1,201 @@
+/**
+ * scan4secrets theme — amber/security accent.
+ * Built on Docusaurus Infima with custom variables.
+ */
+
+:root {
+  --ifm-color-primary: #f59e0b;
+  --ifm-color-primary-dark: #d97706;
+  --ifm-color-primary-darker: #b45309;
+  --ifm-color-primary-darkest: #92400e;
+  --ifm-color-primary-light: #fbbf24;
+  --ifm-color-primary-lighter: #fcd34d;
+  --ifm-color-primary-lightest: #fde68a;
+
+  --ifm-code-font-size: 92%;
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Roboto', 'Helvetica Neue', sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Menlo', 'Consolas', monospace;
+  --ifm-heading-font-weight: 700;
+  --ifm-navbar-height: 64px;
+
+  --docusaurus-highlighted-code-line-bg: rgba(245, 158, 11, 0.12);
+
+  --s4s-bg-dark: #0f1115;
+  --s4s-bg-panel: #161a22;
+  --s4s-border: rgba(245, 158, 11, 0.18);
+  --s4s-text-muted: #94a3b8;
+  --s4s-success: #10b981;
+  --s4s-danger: #ef4444;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #fbbf24;
+  --ifm-color-primary-dark: #f59e0b;
+  --ifm-color-primary-darker: #d97706;
+  --ifm-color-primary-darkest: #b45309;
+  --ifm-color-primary-light: #fcd34d;
+  --ifm-color-primary-lighter: #fde68a;
+  --ifm-color-primary-lightest: #fef3c7;
+
+  --ifm-background-color: #0f1115;
+  --ifm-background-surface-color: #161a22;
+  --ifm-navbar-background-color: rgba(15, 17, 21, 0.85);
+  --ifm-footer-background-color: #0a0c10;
+
+  --docusaurus-highlighted-code-line-bg: rgba(251, 191, 36, 0.18);
+}
+
+/* Navbar — subtle border. The frosted-glass `backdrop-filter` is desktop-only:
+   applying it at any width creates a CSS containing block, which traps the
+   mobile drawer (`.navbar-sidebar`, a fixed descendant) inside the navbar's
+   bounds and crops it to ~64px tall. Keep filter strictly above 996px. */
+.navbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-theme='light'] .navbar {
+  background-color: rgba(255, 255, 255, 0.85);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+@media (min-width: 997px) {
+  .navbar {
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+  }
+}
+
+/* Announcement bar polish */
+div[class^='announcementBar_'] {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+div[class^='announcementBar_'] a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 700;
+}
+div[class^='announcementBar_'] a:hover {
+  text-decoration: none;
+}
+
+/* Code blocks */
+.theme-code-block {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13.5px;
+}
+
+/* Tables — responsive scroll */
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+}
+.markdown table thead {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+/* Cards / admonitions */
+.theme-admonition {
+  border-radius: 10px;
+  border-left-width: 4px;
+}
+
+/* Footer */
+.footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 3rem 0 1.5rem;
+  background: linear-gradient(180deg, var(--ifm-footer-background-color, #0a0c10) 0%, #07090c 100%);
+}
+.footer__links {
+  margin-bottom: 1.75rem;
+}
+.footer__title {
+  color: var(--ifm-color-primary-light);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+.footer__item {
+  padding: 4px 0;
+}
+.footer__link-item {
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 0.94rem;
+  transition: color 160ms ease;
+  text-decoration: none;
+}
+.footer__link-item:hover {
+  color: var(--ifm-color-primary-light);
+  text-decoration: none;
+}
+.footer__bottom {
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.footer__copyright {
+  font-size: 0.85rem;
+  color: rgba(226, 232, 240, 0.55);
+}
+.footer__copyright a {
+  color: var(--ifm-color-primary-light);
+  text-decoration: none;
+}
+.footer__copyright a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .footer {
+    padding: 2.5rem 0 1rem;
+    text-align: left;
+  }
+  .footer__col {
+    margin-bottom: 1.5rem;
+  }
+}
+
+/* Mobile navbar drawer — make sure custom items lay out vertically and are tappable */
+@media (max-width: 996px) {
+  .navbar-sidebar .navbar-sidebar__item {
+    padding: 8px 12px;
+  }
+  .navbar-sidebar__items .menu__link {
+    font-size: 0.95rem;
+  }
+  /* Custom navbar items (like GitHubStats) become full-width inside the drawer */
+  .navbar-sidebar .navbar__item {
+    width: 100%;
+    margin: 4px 0;
+  }
+}
+
+/* Hide ugly default sidebar hide button on small screens */
+@media (max-width: 996px) {
+  .navbar-sidebar__brand {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+}
+
+/* Responsive type scale */
+@media (max-width: 768px) {
+  :root {
+    --ifm-h1-font-size: 1.85rem;
+    --ifm-h2-font-size: 1.45rem;
+    --ifm-h3-font-size: 1.2rem;
+  }
+}
+
+/* Selection */
+::selection {
+  background: rgba(245, 158, 11, 0.4);
+  color: #fff;
+}
+
+/* Smooth scroll for in-page anchors */
+html {
+  scroll-behavior: smooth;
+}

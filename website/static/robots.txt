@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://scan4secrets.m14r41.in/sitemap.xml

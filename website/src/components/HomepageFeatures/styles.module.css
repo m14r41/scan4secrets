@@ -1,0 +1,72 @@
+.features {
+  padding: 5rem 0 2rem;
+}
+
+.title {
+  text-align: center;
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  text-align: center;
+  color: var(--s4s-text-muted);
+  margin-bottom: 2.5rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+.card {
+  padding: 1.75rem;
+  background: var(--s4s-bg-panel);
+  border: 1px solid var(--s4s-border);
+  border-radius: 14px;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 12px 32px rgba(245, 158, 11, 0.08);
+}
+
+.icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--ifm-color-primary-light);
+  margin-bottom: 1rem;
+}
+.icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.cardTitle {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.cardBody {
+  margin: 0;
+  color: var(--s4s-text-muted);
+  font-size: 0.96rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 996px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; }
+}

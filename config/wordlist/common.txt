@@ -1,2 +1,0 @@
-Vuln.java
-vuln.js

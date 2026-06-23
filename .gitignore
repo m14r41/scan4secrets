@@ -1,0 +1,45 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+sdist/
+wheels/
+.venv/
+venv/
+env/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.cache/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+reports/
+# website/static/reports/* contains the sample SAST/DAST scan output. The
+# JSON/JSONL/CSV variants embed `line_excerpt` showing the original lines
+# (incl. AWS docs example values), which GitHub push protection flags as
+# secrets. Regenerate locally with the commands on /docs/sample-report.
+website/static/reports/
+.test-targets/
+legacy_*/
+publish.md
+
+# Docusaurus
+website/node_modules/
+website/build/
+website/.docusaurus/
+website/.cache-loader/
+website/bun.lockb

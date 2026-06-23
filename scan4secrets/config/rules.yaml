@@ -1,0 +1,1256 @@
+# scan4secrets v2 detection rules.
+# Each rule is matched as: keyword pre-filter (fast) -> regex (precise) -> entropy gate -> allowlist.
+# Schema:
+#   id            unique slug
+#   description   human-readable
+#   severity      info | low | medium | high | critical
+#   keywords      list of substrings that must appear in the line (case-insensitive). [] = run on every line.
+#   regex         Python regex; the FIRST capturing group is treated as the secret value.
+#   entropy_min   skip if Shannon entropy of value < this (default 0.0)
+#   allowlist:
+#     regex       skip if any of these patterns match the full line
+#     paths       skip if file path matches any of these globs
+#   verify        optional: live verification config (see VERIFICATION.md)
+
+# =================== Cloud providers ===================
+
+- id: aws-access-key-id
+  description: AWS Access Key ID
+  severity: high
+  keywords: ["AKIA", "ASIA", "AGPA", "AROA", "AIPA"]
+  regex: '\b((?:AKIA|ASIA|AGPA|AROA|AIPA)[0-9A-Z]{16})\b'
+  entropy_min: 3.0
+  allowlist:
+    regex:
+      - 'AKIAIOSFODNN7EXAMPLE'
+      - 'AKIAI[0-9A-Z]{15}EXAMPLE'
+
+- id: aws-secret-access-key
+  description: AWS Secret Access Key (contextual)
+  severity: critical
+  keywords: ["aws_secret", "aws.secret", "secret_access_key", "SECRET_ACCESS_KEY"]
+  regex: '(?i)aws[_\.\-]?(?:secret|access)[_\.\-]?key[\s:=]+["'']?([A-Za-z0-9/+=]{40})["'']?'
+  entropy_min: 4.0
+
+- id: aws-mws-token
+  description: AWS MWS Auth Token
+  severity: high
+  keywords: ["amzn.mws."]
+  regex: '\b(amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'
+
+- id: gcp-api-key
+  description: Google API Key
+  severity: high
+  keywords: ["AIza"]
+  regex: '\b(AIza[0-9A-Za-z\-_]{35})\b'
+  entropy_min: 3.5
+
+- id: gcp-oauth-client
+  description: Google OAuth Client ID
+  severity: medium
+  keywords: [".apps.googleusercontent.com"]
+  regex: '([0-9]+-[a-z0-9_]{32}\.apps\.googleusercontent\.com)'
+
+- id: gcp-service-account-json
+  description: GCP service-account JSON key (private key payload)
+  severity: critical
+  keywords: ["service_account", "private_key_id"]
+  regex: '"type"\s*:\s*"service_account"[^}]*?"private_key_id"\s*:\s*"([0-9a-f]{40})"'
+
+- id: azure-storage-account-key
+  description: Azure Storage Account Key
+  severity: critical
+  keywords: ["AccountKey="]
+  regex: 'AccountKey=([A-Za-z0-9+/=]{86,88})'
+  entropy_min: 4.0
+
+- id: azure-sas-token
+  description: Azure Shared Access Signature
+  severity: high
+  keywords: ["sig=", "?sv="]
+  regex: "\\?sv=[0-9\\-]+&[^\"'\\s]+&sig=([A-Za-z0-9%]{40,})"
+
+- id: digitalocean-pat
+  description: DigitalOcean Personal Access Token
+  severity: critical
+  keywords: ["dop_v1_"]
+  regex: '\b(dop_v1_[a-f0-9]{64})\b'
+
+- id: heroku-api-key
+  description: Heroku API Key (UUID v4 near "heroku")
+  severity: high
+  keywords: ["heroku"]
+  regex: '(?i)heroku[^A-Za-z0-9]{1,10}([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})'
+
+# =================== Source control ===================
+
+- id: github-pat-classic
+  description: GitHub Personal Access Token (classic)
+  severity: critical
+  keywords: ["ghp_"]
+  regex: '\b(ghp_[A-Za-z0-9]{36})\b'
+  verify:
+    method: GET
+    url: https://api.github.com/user
+    header_name: Authorization
+    header_value: "token {{value}}"
+    success_status: 200
+
+- id: github-pat-fine-grained
+  description: GitHub Personal Access Token (fine-grained)
+  severity: critical
+  keywords: ["github_pat_"]
+  regex: '\b(github_pat_[A-Za-z0-9_]{82})\b'
+  verify:
+    method: GET
+    url: https://api.github.com/user
+    header_name: Authorization
+    header_value: "token {{value}}"
+    success_status: 200
+
+- id: github-oauth
+  description: GitHub OAuth Access Token
+  severity: critical
+  keywords: ["gho_"]
+  regex: '\b(gho_[A-Za-z0-9]{36})\b'
+
+- id: github-app-token
+  description: GitHub App Token
+  severity: high
+  keywords: ["ghs_", "ghu_"]
+  regex: '\b((?:ghs|ghu)_[A-Za-z0-9]{36})\b'
+
+- id: github-refresh-token
+  description: GitHub Refresh Token
+  severity: high
+  keywords: ["ghr_"]
+  regex: '\b(ghr_[A-Za-z0-9]{36,})\b'
+
+- id: gitlab-pat
+  description: GitLab Personal Access Token
+  severity: critical
+  keywords: ["glpat-"]
+  regex: '\b(glpat-[A-Za-z0-9_\-]{20})\b'
+
+- id: bitbucket-app-password
+  description: Bitbucket App Password (contextual)
+  severity: high
+  keywords: ["bitbucket"]
+  regex: '(?i)bitbucket[^A-Za-z0-9]{1,12}([A-Za-z0-9]{32,})'
+  entropy_min: 4.0
+
+# =================== Payments ===================
+
+- id: stripe-secret-live
+  description: Stripe Live Secret Key
+  severity: critical
+  keywords: ["sk_live_"]
+  regex: '\b(sk_live_[A-Za-z0-9]{24,})\b'
+  verify:
+    method: GET
+    url: https://api.stripe.com/v1/charges?limit=1
+    header_name: Authorization
+    header_value: "Bearer {{value}}"
+    success_status: 200
+
+- id: stripe-restricted-live
+  description: Stripe Live Restricted Key
+  severity: critical
+  keywords: ["rk_live_"]
+  regex: '\b(rk_live_[A-Za-z0-9]{24,})\b'
+
+- id: stripe-publishable-live
+  description: Stripe Live Publishable Key (low risk)
+  severity: low
+  keywords: ["pk_live_"]
+  regex: '\b(pk_live_[A-Za-z0-9]{24,})\b'
+
+- id: square-token
+  description: Square Access Token
+  severity: high
+  keywords: ["EAAA", "sq0atp-", "sq0csp-"]
+  regex: '\b(sq0(?:atp|csp)-[A-Za-z0-9_\-]{22,})\b'
+
+- id: paypal-braintree-token
+  description: PayPal/Braintree access token
+  severity: high
+  keywords: ["access_token$production$", "access_token$sandbox$"]
+  regex: '\b(access_token\$(?:production|sandbox)\$[a-z0-9_]{16}\$[a-f0-9]{32})\b'
+
+# =================== Messaging ===================
+
+- id: slack-bot-token
+  description: Slack token (bot/user/legacy)
+  severity: high
+  keywords: ["xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-"]
+  regex: '\b(xox[abprs]-[A-Za-z0-9-]{10,})\b'
+  verify:
+    method: POST
+    url: https://slack.com/api/auth.test
+    header_name: Authorization
+    header_value: "Bearer {{value}}"
+    success_status: 200
+    failure_body_contains: '"ok":false'
+
+- id: slack-webhook
+  description: Slack Incoming Webhook
+  severity: medium
+  keywords: ["hooks.slack.com"]
+  regex: '(https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+)'
+
+- id: discord-bot-token
+  description: Discord Bot Token
+  severity: high
+  keywords: ["MT", "Nz", "Bot "]
+  regex: '\b([MN][A-Za-z\d]{23}\.[\w\-]{6}\.[\w\-]{27})\b'
+
+- id: discord-webhook
+  description: Discord Webhook URL
+  severity: low
+  keywords: ["discord.com/api/webhooks"]
+  regex: '(https://discord(?:app)?\.com/api/webhooks/[0-9]+/[A-Za-z0-9_\-]+)'
+
+- id: telegram-bot-token
+  description: Telegram Bot Token
+  severity: medium
+  keywords: [":AAE", ":AAF", ":AAG", ":AAH"]
+  regex: '\b(\d{8,12}:AA[A-Za-z0-9_\-]{33,35})\b'
+
+- id: twilio-account-sid
+  description: Twilio Account SID
+  severity: medium
+  keywords: ["AC"]
+  regex: '\b(AC[0-9a-fA-F]{32})\b'
+
+- id: twilio-api-key
+  description: Twilio API Key SID
+  severity: high
+  keywords: ["SK"]
+  regex: '\b(SK[0-9a-fA-F]{32})\b'
+
+# =================== AI / ML ===================
+
+- id: openai-key
+  description: OpenAI API Key
+  severity: high
+  keywords: ["sk-"]
+  regex: '\b(sk-(?:proj-)?[A-Za-z0-9_\-]{20,})\b'
+  entropy_min: 3.5
+  verify:
+    method: GET
+    url: https://api.openai.com/v1/models
+    header_name: Authorization
+    header_value: "Bearer {{value}}"
+    success_status: 200
+
+- id: anthropic-key
+  description: Anthropic API Key
+  severity: high
+  keywords: ["sk-ant-"]
+  regex: '\b(sk-ant-[A-Za-z0-9_\-]{90,})\b'
+
+- id: huggingface-token
+  description: Hugging Face token
+  severity: high
+  keywords: ["hf_"]
+  regex: '\b(hf_[A-Za-z0-9]{34,})\b'
+
+- id: replicate-token
+  description: Replicate API token
+  severity: high
+  keywords: ["r8_"]
+  regex: '\b(r8_[A-Za-z0-9]{37,})\b'
+
+# =================== Email / SaaS ===================
+
+- id: sendgrid-key
+  description: SendGrid API Key
+  severity: high
+  keywords: ["SG."]
+  regex: '\b(SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43})\b'
+
+- id: mailgun-key
+  description: Mailgun API Key
+  severity: high
+  keywords: ["key-"]
+  regex: '\b(key-[0-9a-f]{32})\b'
+
+- id: mailchimp-key
+  description: Mailchimp API Key
+  severity: high
+  keywords: ["-us"]
+  regex: '\b([0-9a-f]{32}-us[0-9]{1,2})\b'
+
+- id: postmark-key
+  description: Postmark Server Token
+  severity: medium
+  keywords: ["postmark"]
+  regex: '(?i)postmark[^A-Za-z0-9]{1,12}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+
+# =================== Monitoring ===================
+
+- id: datadog-api-key
+  description: Datadog API Key
+  severity: high
+  keywords: ["datadog", "DD_API_KEY"]
+  regex: '(?i)(?:datadog|dd_api_key)[^A-Za-z0-9]{1,12}([a-f0-9]{32})'
+
+- id: sentry-dsn
+  description: Sentry DSN (contains secret)
+  severity: medium
+  keywords: ["sentry.io", "ingest.sentry"]
+  regex: '(https?://[a-f0-9]{32}@[a-zA-Z0-9.\-]*sentry\.io/[0-9]+)'
+
+- id: new-relic-key
+  description: New Relic License Key
+  severity: medium
+  keywords: ["NRAK-"]
+  regex: '\b(NRAK-[A-Z0-9]{27})\b'
+
+# =================== Infra / DevOps ===================
+
+- id: docker-registry-auth
+  description: Docker Registry config auth (base64)
+  severity: high
+  keywords: ['"auth":']
+  regex: '"auth"\s*:\s*"([A-Za-z0-9+/=]{20,})"'
+  entropy_min: 3.5
+
+- id: dockerhub-pat
+  description: Docker Hub Personal Access Token
+  severity: high
+  keywords: ["dckr_pat_"]
+  regex: '\b(dckr_pat_[A-Za-z0-9_\-]{27,})\b'
+
+- id: npm-token
+  description: NPM access token
+  severity: high
+  keywords: ["npm_"]
+  regex: '\b(npm_[A-Za-z0-9]{36})\b'
+
+- id: pypi-token
+  description: PyPI upload token
+  severity: high
+  keywords: ["pypi-"]
+  regex: '\b(pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,})\b'
+
+- id: terraform-cloud-token
+  description: Terraform Cloud API token
+  severity: high
+  keywords: [".atlasv1."]
+  regex: '\b([A-Za-z0-9]{14,16}\.atlasv1\.[A-Za-z0-9_\-]{60,})\b'
+
+- id: vault-token
+  description: HashiCorp Vault root/service token
+  severity: critical
+  keywords: ["hvs.", "s.", "b."]
+  regex: '\b(hvs\.[A-Za-z0-9_\-]{90,})\b'
+
+# =================== Auth ===================
+
+- id: jwt-token
+  description: JSON Web Token
+  severity: medium
+  keywords: ["eyJ"]
+  regex: '\b(eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})\b'
+  entropy_min: 4.0
+  allowlist:
+    paths: ["**/*.test.*", "**/test_*"]
+
+- id: basic-auth-url
+  description: HTTP Basic Auth credentials in URL
+  severity: high
+  keywords: ["://"]
+  regex: '(?i)\b(?:https?|ftp)://([^/\s:@]+):([^/\s:@]+)@'
+
+# =================== Crypto / Keys ===================
+
+- id: private-key-block
+  description: Private key (RSA / EC / OPENSSH / PGP / DSA / generic)
+  severity: critical
+  keywords: ["BEGIN ", "PRIVATE KEY"]
+  regex: '(-----BEGIN ((?:RSA|EC|OPENSSH|PGP|DSA|ENCRYPTED) )?PRIVATE KEY-----)'
+
+- id: ssh-pub-key-comment
+  description: SSH authorized_keys with identifying comment
+  severity: low
+  keywords: ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"]
+  regex: '\b((?:ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9\-]+) AAAA[0-9A-Za-z+/=]{100,})'
+
+- id: pgp-private-key
+  description: PGP Private Key Block
+  severity: critical
+  keywords: ["BEGIN PGP PRIVATE"]
+  regex: '(-----BEGIN PGP PRIVATE KEY BLOCK-----)'
+
+# =================== Generic catch-all (last resort, high entropy) ===================
+
+- id: contextual-hex-token
+  description: Hex token (32 / 40 / 64 chars) next to a credential-sounding name
+  severity: medium
+  keywords: ["token", "secret", "key", "auth", "password", "api"]
+  regex: "(?i)(?:token|secret|key|auth|password|api[_\\-]?key|sid)[A-Z0-9_]*\\s*[:=]\\s*[\"']?([a-f0-9]{32,64})\\b"
+  allowlist:
+    regex: ['00000000', 'deadbeef', 'aaaaaaaa', '12345678', '<[^>]*>']
+    paths:
+      - "**/*.md"
+      - "**/test_*"
+      - "**/tests/**"
+      - "**/*.example"
+      - "**/*.sample"
+
+- id: contextual-uuid-secret
+  description: UUID next to a credential-sounding name (npm tokens, etc.)
+  severity: medium
+  keywords: ["token", "secret", "key", "auth"]
+  regex: "(?i)(?:token|secret|key|auth)[A-Z0-9_]*\\s*[:=]\\s*[\"']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\b"
+  allowlist:
+    paths: ["**/*.md", "**/test_*", "**/tests/**", "**/*.example", "**/*.sample"]
+
+# =================== E-Commerce / Storefront ===================
+
+- id: shopify-private-app-access-token
+  description: Shopify private app access token
+  severity: critical
+  keywords: ["shpat_"]
+  regex: '\b(shpat_[a-f0-9]{32})\b'
+
+- id: shopify-shared-secret
+  description: Shopify shared secret
+  severity: high
+  keywords: ["shpss_"]
+  regex: '\b(shpss_[a-f0-9]{32})\b'
+
+- id: shopify-custom-app-access-token
+  description: Shopify custom app access token
+  severity: critical
+  keywords: ["shpca_"]
+  regex: '\b(shpca_[a-f0-9]{32})\b'
+
+- id: shopify-partner-token
+  description: Shopify Partner API access token
+  severity: high
+  keywords: ["shppa_"]
+  regex: '\b(shppa_[a-f0-9]{32})\b'
+
+- id: woocommerce-consumer-key
+  description: WooCommerce REST consumer key
+  severity: high
+  keywords: ["ck_"]
+  regex: '\b(ck_[a-f0-9]{40})\b'
+
+- id: woocommerce-consumer-secret
+  description: WooCommerce REST consumer secret
+  severity: high
+  keywords: ["cs_"]
+  regex: '\b(cs_[a-f0-9]{40})\b'
+
+# =================== Cloud / CDN / Edge ===================
+
+- id: cloudflare-api-token
+  description: Cloudflare API token (scoped, v4)
+  severity: high
+  keywords: ["cloudflare", "CF_API_TOKEN"]
+  regex: "(?i)(?:cloudflare|cf[_\\-]?api[_\\-]?token)[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{40})"
+  entropy_min: 4.0
+  verify:
+    method: GET
+    url: https://api.cloudflare.com/client/v4/user/tokens/verify
+    header_name: Authorization
+    header_value: "Bearer {{value}}"
+    success_status: 200
+    success_body_contains: '"status":"active"'
+
+- id: cloudflare-origin-ca-key
+  description: Cloudflare Origin CA key
+  severity: high
+  keywords: ["v1.0-"]
+  regex: '\b(v1\.0-[A-Za-z0-9]{171})\b'
+
+- id: fastly-api-token
+  description: Fastly API token
+  severity: high
+  keywords: ["fastly"]
+  regex: "(?i)fastly[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{32})"
+  entropy_min: 4.0
+
+- id: cloudinary-url
+  description: Cloudinary URL with API key + secret
+  severity: critical
+  keywords: ["cloudinary://"]
+  regex: '(cloudinary://\d+:[A-Za-z0-9_\-]+@[a-z0-9_\-]+)'
+
+- id: akamai-edgegrid-token
+  description: Akamai EdgeGrid client token
+  severity: high
+  keywords: ["akab-"]
+  regex: '\b(akab-[A-Za-z0-9]{16}-[A-Za-z0-9]{16})\b'
+
+- id: bunny-cdn-api-key
+  description: BunnyCDN API key
+  severity: high
+  keywords: ["bunny", "BUNNY_API_KEY"]
+  regex: "(?i)bunny[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12,}-[a-f0-9]{12,})"
+
+# =================== Cloud platforms (extended) ===================
+
+- id: linode-pat
+  description: Linode Personal Access Token
+  severity: high
+  keywords: ["linode", "LINODE_"]
+  regex: "(?i)linode[^A-Za-z0-9]{1,15}([a-f0-9]{64})"
+
+- id: vultr-api-key
+  description: Vultr API key
+  severity: high
+  keywords: ["vultr"]
+  regex: "(?i)vultr[^A-Za-z0-9]{1,15}([A-Z0-9]{36})"
+
+- id: hetzner-cloud-token
+  description: Hetzner Cloud API token
+  severity: high
+  keywords: ["hetzner", "HCLOUD_TOKEN"]
+  regex: "(?i)(?:hetzner|hcloud[_\\-]?token)[^A-Za-z0-9]{1,15}([A-Za-z0-9]{64})"
+
+- id: alibaba-access-key-id
+  description: Alibaba Cloud AccessKey ID
+  severity: high
+  keywords: ["LTAI"]
+  regex: '\b(LTAI[A-Za-z0-9]{12,20})\b'
+
+- id: ibm-cloud-iam-key
+  description: IBM Cloud IAM API key
+  severity: high
+  keywords: ["ibm", "IBM_CLOUD_API_KEY"]
+  regex: "(?i)ibm[_\\-]?cloud[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{44})"
+
+- id: oracle-cloud-key
+  description: Oracle Cloud API key
+  severity: high
+  keywords: ["ocid1."]
+  regex: '\b(ocid1\.user\.oc1\.\.[a-z0-9]{60,})\b'
+
+- id: render-api-key
+  description: Render API key
+  severity: high
+  keywords: ["rnd_"]
+  regex: '\b(rnd_[A-Za-z0-9]{14,})\b'
+
+- id: vercel-token
+  description: Vercel API token
+  severity: high
+  keywords: ["vercel"]
+  regex: "(?i)vercel[^A-Za-z0-9]{1,15}([A-Za-z0-9]{24})"
+
+- id: netlify-token
+  description: Netlify Personal Access Token
+  severity: high
+  keywords: ["netlify"]
+  regex: "(?i)netlify[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{40,})"
+
+- id: fly-io-token
+  description: Fly.io API token
+  severity: high
+  keywords: ["fo1_", "FlyV1"]
+  regex: '\b(fo1_[A-Za-z0-9_\-]{40,}|FlyV1\s+fm2_[A-Za-z0-9_=\-]{100,})\b'
+
+- id: doppler-token
+  description: Doppler service / CLI token
+  severity: critical
+  keywords: ["dp.pt.", "dp.st.", "dp.sa.", "dp.ct."]
+  regex: '\b(dp\.(?:pt|st|sa|ct)\.[A-Za-z0-9]{40,})\b'
+
+# =================== CI / CD ===================
+
+- id: circleci-token
+  description: CircleCI Personal API token
+  severity: high
+  keywords: ["circleci", "CIRCLE_TOKEN"]
+  regex: "(?i)(?:circleci|circle[_\\-]?token)[^A-Za-z0-9]{1,15}([a-f0-9]{40})"
+
+- id: travis-token
+  description: Travis CI API token
+  severity: high
+  keywords: ["travis"]
+  regex: "(?i)travis[^A-Za-z0-9]{1,15}([A-Za-z0-9]{22})"
+
+- id: buildkite-token
+  description: Buildkite API token
+  severity: high
+  keywords: ["bkua_", "bkat_"]
+  regex: '\b((?:bkua|bkat)_[a-f0-9]{40})\b'
+
+- id: jenkins-api-token
+  description: Jenkins API token
+  severity: high
+  keywords: ["jenkins"]
+  regex: "(?i)jenkins[^A-Za-z0-9]{1,15}([a-f0-9]{32,34})"
+
+- id: argocd-token
+  description: ArgoCD JWT bearer token
+  severity: critical
+  keywords: ["argocd.token", "ARGOCD_AUTH_TOKEN"]
+  regex: "(?i)argocd[._\\-]?(?:token|auth_token)[^A-Za-z0-9]{1,15}(eyJ[A-Za-z0-9_\\-]{10,}\\.eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,})"
+
+- id: snyk-api-token
+  description: Snyk API token
+  severity: high
+  keywords: ["snyk"]
+  regex: "(?i)snyk[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+
+- id: pulumi-access-token
+  description: Pulumi access token
+  severity: high
+  keywords: ["pul-"]
+  regex: '\b(pul-[a-f0-9]{40})\b'
+
+# =================== Auth / identity ===================
+
+- id: auth0-client-secret
+  description: Auth0 client secret (contextual)
+  severity: critical
+  keywords: ["auth0", "AUTH0_CLIENT_SECRET"]
+  regex: "(?i)auth0[._\\-]?client[._\\-]?secret[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{40,})"
+  entropy_min: 4.0
+
+- id: okta-api-token
+  description: Okta API token
+  severity: critical
+  keywords: ["okta", "00"]
+  regex: "(?i)okta[^A-Za-z0-9]{1,15}(00[A-Za-z0-9_\\-]{40})"
+
+- id: clerk-secret-key
+  description: Clerk secret key
+  severity: critical
+  keywords: ["sk_test_", "sk_live_"]
+  regex: '\b((?:sk_test|sk_live)_[A-Za-z0-9]{40,})\b'
+
+- id: clerk-publishable-key
+  description: Clerk publishable key (low risk)
+  severity: low
+  keywords: ["pk_test_", "pk_live_"]
+  regex: '\b((?:pk_test|pk_live)_[A-Za-z0-9]{40,})\b'
+
+- id: workos-api-key
+  description: WorkOS API key
+  severity: critical
+  keywords: ["sk_test_", "sk_live_", "workos"]
+  regex: "(?i)workos[^A-Za-z0-9]{1,15}(sk_(?:test|live)_[A-Za-z0-9]{40,})"
+
+- id: stytch-secret
+  description: Stytch secret
+  severity: critical
+  keywords: ["secret-test-", "secret-live-"]
+  regex: '\b(secret-(?:test|live)-[A-Za-z0-9_\-=]{40,})\b'
+
+- id: atlassian-api-token
+  description: Atlassian / Jira API token
+  severity: high
+  keywords: ["atlassian", "ATLASSIAN_API_TOKEN"]
+  regex: "(?i)atlassian[^A-Za-z0-9]{1,15}([A-Za-z0-9]{20,24})"
+
+# =================== Productivity SaaS ===================
+
+- id: notion-integration-token
+  description: Notion integration token
+  severity: high
+  keywords: ["secret_", "ntn_"]
+  regex: '\b((?:secret|ntn)_[A-Za-z0-9]{43,50})\b'
+
+- id: linear-api-key
+  description: Linear API key
+  severity: high
+  keywords: ["lin_api_", "lin_oauth_"]
+  regex: '\b(lin_(?:api|oauth)_[A-Za-z0-9]{40,})\b'
+
+- id: airtable-pat
+  description: Airtable Personal Access Token
+  severity: high
+  keywords: ["pat"]
+  regex: '\b(pat[A-Za-z0-9]{14}\.[a-f0-9]{64})\b'
+
+- id: asana-pat
+  description: Asana Personal Access Token
+  severity: high
+  keywords: ["asana", "ASANA_TOKEN"]
+  regex: "(?i)asana[^A-Za-z0-9]{1,15}([0-9]+/[0-9]+:[a-f0-9]{32,40})"
+
+- id: clickup-api-token
+  description: ClickUp API token
+  severity: high
+  keywords: ["pk_"]
+  regex: '\b(pk_\d+_[A-Z0-9]{32})\b'
+
+- id: typeform-pat
+  description: Typeform Personal Access Token
+  severity: high
+  keywords: ["tfp_"]
+  regex: '\b(tfp_[A-Za-z0-9_\-\.]{50,})\b'
+
+- id: calendly-pat
+  description: Calendly Personal Access Token (JWT)
+  severity: medium
+  keywords: ["calendly", "CALENDLY_API_KEY"]
+  regex: "(?i)calendly[^A-Za-z0-9]{1,15}(eyJ[A-Za-z0-9_\\-]{10,}\\.eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,})"
+
+- id: zendesk-api-token
+  description: Zendesk API token
+  severity: high
+  keywords: ["zendesk"]
+  regex: "(?i)zendesk[^A-Za-z0-9]{1,15}([A-Za-z0-9]{40})"
+
+- id: intercom-token
+  description: Intercom access token
+  severity: high
+  keywords: ["intercom"]
+  regex: "(?i)intercom[^A-Za-z0-9]{1,15}(dG9rOg[A-Za-z0-9_\\-=]{40,})"
+
+# =================== AI / ML extended ===================
+
+- id: cohere-api-key
+  description: Cohere API key
+  severity: high
+  keywords: ["cohere", "COHERE_API_KEY"]
+  regex: "(?i)cohere[^A-Za-z0-9]{1,15}([A-Za-z0-9]{40})"
+
+- id: pinecone-api-key
+  description: Pinecone API key
+  severity: high
+  keywords: ["pinecone", "PINECONE_API_KEY"]
+  regex: "(?i)pinecone[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+
+- id: mistral-api-key
+  description: Mistral AI API key
+  severity: high
+  keywords: ["mistral", "MISTRAL_API_KEY"]
+  regex: "(?i)mistral[^A-Za-z0-9]{1,15}([A-Za-z0-9]{32})"
+
+- id: groq-api-key
+  description: Groq API key
+  severity: high
+  keywords: ["gsk_"]
+  regex: '\b(gsk_[A-Za-z0-9]{50,})\b'
+
+- id: perplexity-api-key
+  description: Perplexity API key
+  severity: high
+  keywords: ["pplx-"]
+  regex: '\b(pplx-[A-Za-z0-9]{48,})\b'
+
+- id: deepl-api-key
+  description: DeepL API key
+  severity: medium
+  keywords: ["deepl"]
+  regex: "(?i)deepl[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}:fx)"
+
+- id: assemblyai-api-key
+  description: AssemblyAI API key
+  severity: high
+  keywords: ["assemblyai", "ASSEMBLYAI_API_KEY"]
+  regex: "(?i)assemblyai[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: elevenlabs-api-key
+  description: ElevenLabs API key
+  severity: high
+  keywords: ["elevenlabs", "ELEVEN_LABS"]
+  regex: "(?i)elevenlabs?[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: stability-ai-key
+  description: Stability AI API key
+  severity: high
+  keywords: ["sk-"]
+  regex: '\b(sk-[A-Za-z0-9]{48,})\b'
+  entropy_min: 4.0
+  allowlist:
+    regex: ['sk-proj-', 'sk-ant-']
+
+# =================== Email / SMS / Marketing ===================
+
+- id: resend-api-key
+  description: Resend API key
+  severity: high
+  keywords: ["re_"]
+  regex: '\b(re_[A-Za-z0-9_]{24,})\b'
+
+- id: mailjet-api-key
+  description: Mailjet API key
+  severity: high
+  keywords: ["mailjet", "MJ_APIKEY"]
+  regex: "(?i)mailjet[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: klaviyo-private-key
+  description: Klaviyo private API key
+  severity: critical
+  keywords: ["pk_"]
+  regex: '\b(pk_[a-f0-9]{50,})\b'
+
+- id: convertkit-api-key
+  description: ConvertKit API key
+  severity: medium
+  keywords: ["convertkit", "CK_API_KEY"]
+  regex: "(?i)convertkit[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{22})"
+
+- id: customer-io-key
+  description: Customer.io API key
+  severity: high
+  keywords: ["customer.io", "CUSTOMERIO_API_KEY"]
+  regex: "(?i)customer[._]io[^A-Za-z0-9]{1,15}([A-Za-z0-9]{20})"
+
+# =================== Monitoring / Observability ===================
+
+- id: grafana-service-account-token
+  description: Grafana service account token
+  severity: high
+  keywords: ["glsa_"]
+  regex: '\b(glsa_[A-Za-z0-9_]{32,}_[a-f0-9]{8})\b'
+
+- id: grafana-cloud-access-policy-token
+  description: Grafana Cloud access policy token
+  severity: high
+  keywords: ["glc_"]
+  regex: '\b(glc_[A-Za-z0-9_=\-]{40,})\b'
+
+- id: launchdarkly-sdk-key
+  description: LaunchDarkly SDK key
+  severity: high
+  keywords: ["sdk-"]
+  regex: '\b(sdk-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b'
+
+- id: launchdarkly-mobile-key
+  description: LaunchDarkly mobile key
+  severity: high
+  keywords: ["mob-"]
+  regex: '\b(mob-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b'
+
+- id: honeycomb-api-key
+  description: Honeycomb API key
+  severity: high
+  keywords: ["honeycomb", "HONEYCOMB_API_KEY"]
+  regex: "(?i)honeycomb[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: rollbar-token
+  description: Rollbar access token
+  severity: medium
+  keywords: ["rollbar", "ROLLBAR_TOKEN"]
+  regex: "(?i)rollbar[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: bugsnag-api-key
+  description: Bugsnag API key
+  severity: medium
+  keywords: ["bugsnag"]
+  regex: "(?i)bugsnag[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: sentry-org-auth-token
+  description: Sentry org auth token (full org control)
+  severity: critical
+  keywords: ["sntrys_"]
+  regex: '\b(sntrys_[A-Za-z0-9_=]{60,})\b'
+
+- id: splunk-hec-token
+  description: Splunk HEC token (UUID near "splunk")
+  severity: high
+  keywords: ["splunk"]
+  regex: "(?i)splunk[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+
+- id: pagerduty-token
+  description: PagerDuty API token
+  severity: high
+  keywords: ["pagerduty", "PAGERDUTY_API_KEY"]
+  regex: "(?i)pagerduty[^A-Za-z0-9]{1,15}([A-Za-z0-9_+\\-]{20})"
+
+# =================== Payments / FinTech ===================
+
+- id: razorpay-key-id
+  description: Razorpay Key ID
+  severity: high
+  keywords: ["rzp_test_", "rzp_live_"]
+  regex: '\b(rzp_(?:test|live)_[A-Za-z0-9]{14,})\b'
+
+- id: plaid-secret
+  description: Plaid client secret (contextual)
+  severity: critical
+  keywords: ["plaid", "PLAID_SECRET"]
+  regex: "(?i)plaid[._\\-]?secret[^A-Za-z0-9]{1,15}([a-f0-9]{30})"
+
+- id: plaid-client-id
+  description: Plaid client_id
+  severity: medium
+  keywords: ["plaid", "PLAID_CLIENT_ID"]
+  regex: "(?i)plaid[._\\-]?client[._\\-]?id[^A-Za-z0-9]{1,15}([a-f0-9]{24})"
+
+- id: adyen-api-key
+  description: Adyen API key
+  severity: high
+  keywords: ["AQE"]
+  regex: '\b(AQE[A-Za-z0-9_=\-]{100,})\b'
+
+- id: paddle-api-key
+  description: Paddle API key
+  severity: high
+  keywords: ["pdl_"]
+  regex: '\b(pdl_(?:live|sandbox)_apikey_[A-Za-z0-9]{50,})\b'
+
+- id: coinbase-api-key
+  description: Coinbase Pro / Advanced Trade API key
+  severity: critical
+  keywords: ["coinbase"]
+  regex: "(?i)coinbase[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: binance-api-key
+  description: Binance API key
+  severity: critical
+  keywords: ["binance", "BINANCE_API_KEY"]
+  regex: "(?i)binance[^A-Za-z0-9]{1,15}([A-Za-z0-9]{64})"
+
+# =================== Storage / CDN extended ===================
+
+- id: backblaze-b2-key-id
+  description: Backblaze B2 application Key ID
+  severity: medium
+  keywords: ["B2_APPLICATION_KEY_ID", "backblaze"]
+  regex: '\b([0-9a-f]{4}[a-f0-9]{20})\b'
+  entropy_min: 3.5
+  allowlist:
+    regex: ['00000000', 'deadbeef']
+
+- id: backblaze-b2-app-key
+  description: Backblaze B2 application key
+  severity: critical
+  keywords: ["K00", "B2_APPLICATION_KEY"]
+  regex: '\b(K00[A-Za-z0-9+/]{30,})\b'
+
+# =================== Blockchain / Web3 ===================
+
+- id: infura-project-id
+  description: Infura project ID
+  severity: medium
+  keywords: ["infura"]
+  regex: "(?i)infura[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: alchemy-api-key
+  description: Alchemy API key
+  severity: high
+  keywords: ["alch_", "alchemy.com/v2/"]
+  regex: '(?:alch[_\-]|alchemyapi\.io/v\d+/|alchemy\.com/v\d+/)([A-Za-z0-9_\-]{32})'
+
+- id: etherscan-api-key
+  description: Etherscan API key
+  severity: medium
+  keywords: ["etherscan", "ETHERSCAN_API_KEY"]
+  regex: "(?i)etherscan[^A-Za-z0-9]{1,15}([A-Z0-9]{34})"
+
+- id: walletconnect-project-id
+  description: WalletConnect project ID
+  severity: low
+  keywords: ["walletconnect", "WALLETCONNECT_PROJECT_ID"]
+  regex: "(?i)walletconnect[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+- id: quicknode-endpoint-url
+  description: QuickNode endpoint URL (contains API key)
+  severity: high
+  keywords: ["quiknode.pro", "quicknode.pro"]
+  regex: '(https?://[a-z0-9\-]+\.(?:quiknode|quicknode)\.pro/[a-f0-9]{32}/)'
+
+# =================== Mobile / Push ===================
+
+- id: firebase-cloud-messaging-server-key
+  description: Firebase Cloud Messaging server key
+  severity: critical
+  keywords: ["AAAA"]
+  regex: '\b(AAAA[A-Za-z0-9_\-]{7}:[A-Za-z0-9_\-]{140})\b'
+
+- id: expo-access-token
+  description: Expo access token
+  severity: high
+  keywords: ["expo", "EXPO_TOKEN"]
+  regex: "(?i)expo[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{32})"
+
+- id: onesignal-api-key
+  description: OneSignal REST API key
+  severity: high
+  keywords: ["onesignal"]
+  regex: "(?i)onesignal[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{48})"
+
+- id: appcenter-api-token
+  description: Microsoft AppCenter API token
+  severity: high
+  keywords: ["appcenter", "APPCENTER_API_TOKEN"]
+  regex: "(?i)appcenter[^A-Za-z0-9]{1,15}([a-f0-9]{40})"
+
+# =================== Data / ML platforms ===================
+
+- id: databricks-pat
+  description: Databricks Personal Access Token
+  severity: critical
+  keywords: ["dapi"]
+  regex: '\b(dapi[a-f0-9]{32})\b'
+
+- id: snowflake-jwt-key
+  description: Snowflake JWT (contextual)
+  severity: high
+  keywords: ["snowflake"]
+  regex: "(?i)snowflake[^A-Za-z0-9]{1,15}(eyJ[A-Za-z0-9_\\-]{10,}\\.eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,})"
+
+- id: algolia-admin-key
+  description: Algolia admin / search API key
+  severity: high
+  keywords: ["algolia", "ALGOLIA_ADMIN_KEY"]
+  regex: "(?i)algolia[^A-Za-z0-9]{1,15}([a-f0-9]{32})"
+
+# =================== Messaging extended ===================
+
+- id: microsoft-teams-webhook
+  description: Microsoft Teams incoming webhook
+  severity: medium
+  keywords: ["office.com/webhook", "office365.com/webhook"]
+  regex: '(https://[a-z0-9\-]+\.webhook\.office(?:365)?\.com/webhookb2/[a-f0-9\-]+@[a-f0-9\-]+/IncomingWebhook/[a-f0-9]+/[a-f0-9\-]+)'
+
+- id: zoom-jwt
+  description: Zoom JWT (legacy)
+  severity: high
+  keywords: ["zoom"]
+  regex: "(?i)zoom[^A-Za-z0-9]{1,15}(eyJ[A-Za-z0-9_\\-]{10,}\\.eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,})"
+
+- id: vonage-nexmo-api-key
+  description: Vonage / Nexmo API key + secret
+  severity: high
+  keywords: ["nexmo", "vonage", "NEXMO_API_KEY"]
+  regex: "(?i)(?:nexmo|vonage)[^A-Za-z0-9]{1,15}([a-zA-Z0-9]{8}:[a-zA-Z0-9]{16})"
+
+# =================== QA / browser testing ===================
+
+- id: browserstack-access-key
+  description: BrowserStack access key
+  severity: medium
+  keywords: ["browserstack", "BROWSERSTACK_ACCESS_KEY"]
+  regex: "(?i)browserstack[^A-Za-z0-9]{1,15}([A-Za-z0-9]{20})"
+
+- id: saucelabs-access-key
+  description: Sauce Labs access key
+  severity: medium
+  keywords: ["saucelabs", "SAUCE_ACCESS_KEY"]
+  regex: "(?i)sauce[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+
+- id: percy-token
+  description: Percy visual-diff token
+  severity: medium
+  keywords: ["percy", "PERCY_TOKEN"]
+  regex: "(?i)percy[^A-Za-z0-9]{1,15}([a-f0-9]{40})"
+
+# =================== Package / Container registries ===================
+
+- id: rubygems-api-key
+  description: RubyGems API key
+  severity: high
+  keywords: ["rubygems", "RUBYGEMS_API_KEY"]
+  regex: "(?i)rubygems[^A-Za-z0-9]{1,15}(rubygems_[a-f0-9]{48})"
+
+- id: crates-io-token
+  description: crates.io token
+  severity: high
+  keywords: ["cio"]
+  regex: '\b(cio[A-Za-z0-9]{32})\b'
+
+- id: jfrog-api-token
+  description: JFrog Artifactory API token
+  severity: high
+  keywords: ["jfrog", "ARTIFACTORY"]
+  regex: "(?i)(?:jfrog|artifactory)[^A-Za-z0-9]{1,15}([A-Za-z0-9]{72,128})"
+
+# =================== Auth / Identity (extended) ===================
+
+- id: frontegg-api-token
+  description: Frontegg API token
+  severity: high
+  keywords: ["frontegg"]
+  regex: "(?i)frontegg[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+
+- id: keycloak-secret
+  description: Keycloak client secret
+  severity: critical
+  keywords: ["keycloak", "KEYCLOAK_SECRET"]
+  regex: "(?i)keycloak[^A-Za-z0-9]{1,15}([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+
+# =================== Database / connection strings ===================
+
+- id: postgres-connection-uri
+  description: PostgreSQL connection URI with credentials
+  severity: high
+  keywords: ["postgres://", "postgresql://"]
+  regex: '\b(postgres(?:ql)?://[^/\s:@]+:[^/\s:@]+@[^/\s]+/[A-Za-z0-9_\-]+)'
+
+- id: mysql-connection-uri
+  description: MySQL connection URI with credentials
+  severity: high
+  keywords: ["mysql://"]
+  regex: '\b(mysql://[^/\s:@]+:[^/\s:@]+@[^/\s]+/[A-Za-z0-9_\-]+)'
+
+- id: mongodb-connection-uri
+  description: MongoDB connection URI with credentials
+  severity: high
+  keywords: ["mongodb://", "mongodb+srv://"]
+  regex: '\b(mongodb(?:\+srv)?://[^/\s:@]+:[^/\s:@]+@[^/\s]+)'
+
+- id: redis-connection-uri
+  description: Redis connection URI with password
+  severity: high
+  keywords: ["redis://", "rediss://"]
+  regex: '\b(rediss?://[^/\s:@]*:[^/\s:@]+@[^/\s]+)'
+
+- id: amqp-connection-uri
+  description: AMQP / RabbitMQ connection URI with credentials
+  severity: high
+  keywords: ["amqp://", "amqps://"]
+  regex: '\b(amqps?://[^/\s:@]+:[^/\s:@]+@[^/\s]+)'
+
+# =================== Webhooks / collaboration ===================
+
+- id: zapier-webhook
+  description: Zapier inbound webhook
+  severity: low
+  keywords: ["hooks.zapier.com"]
+  regex: '(https://hooks\.zapier\.com/hooks/catch/\d+/[A-Za-z0-9]+/?)'
+
+- id: ifttt-webhook
+  description: IFTTT Maker webhook key
+  severity: low
+  keywords: ["maker.ifttt.com"]
+  regex: '(https://maker\.ifttt\.com/trigger/[a-zA-Z0-9_]+/with/key/[A-Za-z0-9_\-]+)'
+
+# =================== Carrier / SMS ===================
+
+- id: messagebird-api-key
+  description: MessageBird API key
+  severity: high
+  keywords: ["messagebird", "MESSAGEBIRD_API_KEY"]
+  regex: "(?i)messagebird[^A-Za-z0-9]{1,15}([A-Za-z0-9]{25})"
+
+- id: plivo-auth-token
+  description: Plivo auth token
+  severity: high
+  keywords: ["plivo"]
+  regex: "(?i)plivo[^A-Za-z0-9]{1,15}([A-Za-z0-9]{40})"
+
+# =================== Mapping / Location ===================
+
+- id: mapbox-public-token
+  description: Mapbox access token (pk - public)
+  severity: low
+  keywords: ["pk.eyJ"]
+  regex: '\b(pk\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)\b'
+
+- id: mapbox-secret-token
+  description: Mapbox secret access token (sk - private)
+  severity: critical
+  keywords: ["sk.eyJ"]
+  regex: '\b(sk\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)\b'
+
+- id: here-maps-api-key
+  description: HERE Maps API key
+  severity: medium
+  keywords: ["here", "HERE_API_KEY"]
+  regex: "(?i)here[^A-Za-z0-9]{1,15}([A-Za-z0-9_\\-]{43})"
+
+# =================== Misc high-impact ===================
+
+- id: tailscale-auth-key
+  description: Tailscale auth key
+  severity: critical
+  keywords: ["tskey-auth-", "tskey-client-"]
+  regex: '\b(tskey-(?:auth|client)-[A-Za-z0-9]+-[A-Za-z0-9]+)\b'
+
+- id: tailscale-api-access-token
+  description: Tailscale API access token
+  severity: critical
+  keywords: ["tskey-api-"]
+  regex: '\b(tskey-api-[A-Za-z0-9]+-[A-Za-z0-9]+)\b'
+
+- id: hashicorp-cloud-client-secret
+  description: HashiCorp Cloud Platform client secret
+  severity: critical
+  keywords: ["hcp_"]
+  regex: '\b(hcp_[A-Za-z0-9]{60,})\b'
+
+- id: meta-access-token
+  description: Meta / Facebook Graph API access token
+  severity: high
+  keywords: ["EAA"]
+  regex: '\b(EAA[A-Za-z0-9]{50,300})\b'
+
+- id: shippo-api-token
+  description: Shippo API token
+  severity: high
+  keywords: ["shippo_"]
+  regex: '\b(shippo_(?:test|live)_[a-f0-9]{40})\b'
+
+- id: lemonsqueezy-api-key
+  description: LemonSqueezy API key (JWT-format)
+  severity: critical
+  keywords: ["lemonsqueezy", "LEMON_SQUEEZY"]
+  regex: "(?i)lemon[_\\-]?squeezy[^A-Za-z0-9]{1,15}(eyJ[A-Za-z0-9_\\-]{10,}\\.eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,})"
+
+- id: github-deploy-key-private
+  description: GitHub deploy key (private)
+  severity: critical
+  keywords: ["BEGIN OPENSSH PRIVATE KEY"]
+  regex: '(-----BEGIN OPENSSH PRIVATE KEY-----)'
+
+# =================== Generic catch-alls (last resort) ===================
+
+- id: generic-high-entropy-quoted
+  description: Quoted high-entropy value next to credential-sounding name
+  severity: low
+  keywords: ["secret", "token", "password", "api_key", "apikey", "auth", "passwd"]
+  regex: "(?i)(?:secret|token|password|api[_\\-]?key|auth|passwd)[_\\-\\.\\s]*[:=]\\s*[\"']([A-Za-z0-9/+=_\\-]{20,})[\"']"
+  entropy_min: 4.0
+  allowlist:
+    regex:
+      - 'xxxxxxxx'
+      - '<[^>]*>'
+      - '\{\{[^}]*\}\}'
+      - 'changeme'
+      - 'example'
+      - 'placeholder'
+      - 'your[_\-]?(?:api[_\-]?key|token|secret|password)'
+      - '\$\{[^}]+\}'
+      - 'process\.env\.'
+      - 'os\.(?:getenv|environ)'
+    paths:
+      - "**/*.md"
+      - "**/*.rst"
+      - "**/test_*"
+      - "**/tests/**"
+      - "**/*.example"
+      - "**/*.sample"
+      - "**/*.dist"
+
+- id: generic-high-entropy-unquoted
+  description: Unquoted high-entropy value next to credential-sounding name (.env / shell / yaml style)
+  severity: low
+  keywords: ["secret", "token", "password", "api_key", "apikey", "passwd", "_key"]
+  regex: "(?i)(?:[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|APIKEY|API_KEY|PASSWD|_KEY))\\s*[:=]\\s*([A-Za-z0-9/+=_\\-]{16,})"
+  entropy_min: 3.8
+  allowlist:
+    regex:
+      - 'xxxxxxxx'
+      - '<[^>]*>'
+      - '\{\{[^}]*\}\}'
+      - 'changeme'
+      - 'example'
+      - 'placeholder'
+      - 'your[_\-]?(?:api[_\-]?key|token|secret|password)'
+      - '\$\{[^}]+\}'
+      - 'process\.env'
+      - 'os\.(?:getenv|environ)'
+      - '\bnull\b|\btrue\b|\bfalse\b'
+      - '\b(?:undefined|None)\b'
+    paths:
+      - "**/*.md"
+      - "**/*.rst"
+      - "**/test_*"
+      - "**/tests/**"
+      - "**/*.example"
+      - "**/*.sample"
+      - "**/*.dist"
+      - "**/*.lock"
+      - "**/*.snap"

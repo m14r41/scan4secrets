@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" font-family="-apple-system, Segoe UI, Inter, Roboto, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f1115"/>
+      <stop offset="1" stop-color="#1a0f00"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="900" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="0.5" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#dc2626"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g transform="translate(80, 80)">
+    <rect width="80" height="80" rx="18" fill="url(#accent)"/>
+    <g transform="translate(20, 20)" stroke="#1f1300" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <circle cx="16" cy="16" r="14"/>
+      <line x1="26" y1="26" x2="40" y2="40"/>
+    </g>
+  </g>
+  <text x="80" y="280" font-size="92" font-weight="800" fill="#ffffff" letter-spacing="-2">scan4secrets</text>
+  <text x="80" y="350" font-size="36" font-weight="500" fill="#fbbf24">DAST + SAST secret scanner</text>
+  <text x="80" y="410" font-size="28" font-weight="400" fill="#94a3b8">Find and live-verify leaked credentials in source, web apps, and CI.</text>
+  <g transform="translate(80, 480)">
+    <rect width="200" height="48" rx="24" fill="url(#accent)"/>
+    <text x="100" y="32" font-size="22" font-weight="700" text-anchor="middle" fill="#1f1300">170+ rules</text>
+  </g>
+  <g transform="translate(300, 480)">
+    <rect width="220" height="48" rx="24" fill="none" stroke="#f59e0b" stroke-width="2"/>
+    <text x="110" y="32" font-size="22" font-weight="600" text-anchor="middle" fill="#fbbf24">live verification</text>
+  </g>
+  <text x="1120" y="600" font-size="22" font-weight="500" fill="#94a3b8" text-anchor="end">scan4secrets.m14r41.in</text>
+</svg>

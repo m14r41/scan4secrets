@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
@@ -6,8 +6,42 @@ import Layout from '@theme/Layout';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import styles from './index.module.css';
 
+type InstallTab = 'pipx' | 'docker' | 'release';
+
+const INSTALL_COMMANDS: Record<InstallTab, string> = {
+  pipx: `# Install with pipx (recommended, isolated env, single binary on PATH)
+pipx install scan4secrets
+
+# Verify
+scan4secrets --version
+
+# Run your first scan
+scan4secrets --path . --report sarif --output reports/scan`,
+  docker: `# Pull the latest image from GHCR
+docker pull ghcr.io/m14r41/scan4secrets:latest
+
+# SAST scan a local directory
+docker run --rm -v "$(pwd):/scan" \\
+  ghcr.io/m14r41/scan4secrets:latest \\
+  --path /scan --report sarif --output /scan/reports/scan
+
+# DAST scan a URL (no volume needed)
+docker run --rm ghcr.io/m14r41/scan4secrets:latest \\
+  --url https://staging.example.com --verify`,
+  release: `# Linux amd64
+curl -L -o scan4secrets \\
+  https://github.com/m14r41/scan4secrets/releases/latest/download/scan4secrets-linux-amd64
+chmod +x scan4secrets && sudo mv scan4secrets /usr/local/bin/
+scan4secrets --version
+
+# Windows x64 (PowerShell)
+# Invoke-WebRequest -Uri "https://github.com/m14r41/scan4secrets/releases/latest/download/scan4secrets-win-amd64.exe" \\
+#   -OutFile "$env:USERPROFILE\\scan4secrets.exe"`,
+};
+
 function Hero(): React.ReactElement {
   const {siteConfig} = useDocusaurusContext();
+  const [tab, setTab] = useState<InstallTab>('pipx');
   return (
     <header className={clsx(styles.hero)}>
       <div className={styles.heroGlow} aria-hidden="true" />
@@ -35,20 +69,23 @@ function Hero(): React.ReactElement {
         </div>
 
         <div className={styles.installBox}>
-          <div className={styles.installTabs}>
-            <span className={styles.installTab}>pipx</span>
-            <span className={styles.installTabAlt}>docker</span>
-            <span className={styles.installTabAlt}>release</span>
+          <div className={styles.installTabs} role="tablist" aria-label="Install methods">
+            {(['pipx', 'docker', 'release'] as const).map((t) => (
+              <button
+                key={t}
+                role="tab"
+                type="button"
+                aria-selected={tab === t}
+                tabIndex={tab === t ? 0 : -1}
+                className={clsx(styles.installTab, tab === t && styles.installTabActive)}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
           </div>
           <pre className={styles.installCmd}>
-            <code>{`# install with pipx (recommended)
-pipx install git+https://github.com/m14r41/scan4secrets
-
-# OR run via Docker
-docker run --rm -v $(pwd):/scan ghcr.io/m14r41/scan4secrets:latest --path /scan
-
-# OR grab a prebuilt binary
-# Windows64 and Linux amd64: /docs/downloads`}</code>
+            <code>{INSTALL_COMMANDS[tab]}</code>
           </pre>
         </div>
       </div>

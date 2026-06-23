@@ -95,18 +95,32 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 .installTab {
-  padding: 6px 12px;
-  font-size: 0.8rem;
+  padding: 7px 14px;
+  font-size: 0.82rem;
   font-weight: 600;
+  background: transparent;
+  color: var(--s4s-text-muted);
+  border: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+  font-family: var(--ifm-font-family-monospace);
+}
+.installTab:hover {
+  color: var(--ifm-color-primary-light);
+  background: rgba(245, 158, 11, 0.06);
+}
+.installTab:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+.installTabActive {
   background: rgba(245, 158, 11, 0.18);
   color: var(--ifm-color-primary-lighter);
-  border-radius: 6px 6px 0 0;
 }
-.installTabAlt {
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--s4s-text-muted);
+.installTabActive:hover {
+  background: rgba(245, 158, 11, 0.22);
+  color: var(--ifm-color-primary-lighter);
 }
 
 .installCmd {

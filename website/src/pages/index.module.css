@@ -162,6 +162,8 @@
 /* Compare table */
 .compareSection { padding: 4rem 0; }
 .tableWrap {
+  max-width: 880px;
+  margin: 0 auto;
   overflow-x: auto;
   border-radius: 14px;
   border: 1px solid var(--s4s-border);

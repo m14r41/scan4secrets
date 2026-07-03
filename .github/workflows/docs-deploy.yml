@@ -30,6 +30,18 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate sample reports from fixture
+        # Runs scan4secrets against examples/sample-app so /docs/sample-report
+        # always ships fresh reports matching the current code. Generated into
+        # website/static/reports/ (git-ignored) — never committed.
+        run: |
+          python -m pip install --quiet .
+          bash examples/generate-sample-reports.sh
+
       - name: Install dependencies
         working-directory: website
         run: bun install --frozen-lockfile || bun install

@@ -2523,6 +2523,11 @@
   - verify
   - verify_signature
   regex: (?:verify\s*=\s*False|verify_signature["\x27]?\s*[:=]\s*(?:False|false)|["\x27]verify_signature["\x27]\s*:\s*(?:False|false))
+  context_required:
+  - jwt
+  - jose
+  - decode
+  - verify_signature
   cwe: CWE-347
   owasp: A07:2021 Identification and Authentication Failures
   remediation: Always verify the signature; use decode only for non-trusted introspection.

@@ -1,0 +1,11 @@
+<config>
+  <!-- structural detection: credential-named tag wrapping a <value> across lines -->
+  <SMS_API_KEY>
+    <value>xyz23kdt3uij3430xA9</value>
+  </SMS_API_KEY>
+  <!-- split key/value pair -->
+  <key>PAYMENT_GATEWAY_SECRET</key>
+  <value>pk7Hs92jLm4nQr8tVw1zXy</value>
+  <!-- plain config value: must NOT be flagged -->
+  <endpoint_url>https://api.example.com/sms</endpoint_url>
+</config>

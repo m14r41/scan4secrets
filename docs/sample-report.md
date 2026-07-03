@@ -2,273 +2,167 @@
 id: sample-report
 title: Sample Report
 sidebar_position: 9
-description: A real scan4secrets run against a planted-secret fixture and against this docs site. Download the same scan output in SARIF, JSON, JSONL, CSV, HTML, Excel, and PDF.
-keywords: [scan4secrets sample report, secret scan report example, SARIF example, SAST report, DAST report, scan output, secret scanner demo]
+description: A real scan4secrets --misconfig run against the bundled examples/sample-app fixture. Browse or download the exact output in HTML, SARIF, JSON, JSONL, CSV, Excel, and PDF.
+keywords: [scan4secrets sample report, secret scan report example, SARIF example, SAST report, vulnerability report, CWE OWASP report, secret scanner demo, misconfig scan]
 ---
 
 # Sample Report
 
-A real run of scan4secrets against a planted-secret fixture (SAST) and against the docs site you are reading (DAST). Both runs are reproduced here so you can see exactly what the tool produces before installing it.
+This is a **real** scan4secrets run you can reproduce in one command. It scans the
+[`examples/sample-app`](https://github.com/m14r41/scan4secrets/tree/main/examples/sample-app)
+fixture that ships in the repo — a tiny, deliberately-insecure multi-language app —
+with **`--misconfig`** so you see both secret detection and the SAST
+vulnerability/misconfiguration engine in one report.
 
-Every secret value below is a clearly fake placeholder (AWS documentation example values, or strings stamped with `FAKE`). Nothing in this report authenticates.
-
-## Tool version
+:::note Everything here is fake
+Every "secret" in the fixture is a generic placeholder — nothing authenticates. The
+values are intentionally non-vendor-shaped so the fixture is safe to commit and clone.
+:::
 
 ```text
 $ scan4secrets --version
-scan4secrets 2.1.0
+scan4secrets 2.2.0
 ```
 
-## Run 1, SAST against a planted fixture
+## Download the report
 
-### Target
+The same run, in all seven formats:
 
-A small fixture tree representing a typical web application:
+| Format | Download | Best for |
+|---|---|---|
+| **HTML** | [sast-sample-app.html](pathname:///reports/sast-sample-app.html) | Collapsible, self-contained — share with anyone |
+| **SARIF** | [sast-sample-app.sarif](pathname:///reports/sast-sample-app.sarif) | GitHub Code Scanning, GitLab, Sonar, Defect Dojo |
+| **JSON** | [sast-sample-app.json](pathname:///reports/sast-sample-app.json) | Tooling / post-processing |
+| **JSONL** | [sast-sample-app.jsonl](pathname:///reports/sast-sample-app.jsonl) | SIEM / SOAR streaming, `jq` |
+| **CSV** | [sast-sample-app.csv](pathname:///reports/sast-sample-app.csv) | Spreadsheet triage |
+| **Excel** | [sast-sample-app.xlsx](pathname:///reports/sast-sample-app.xlsx) | Pivot tables, exec summaries |
+| **PDF** | [sast-sample-app.pdf](pathname:///reports/sast-sample-app.pdf) | Compliance evidence packets |
 
-```text
-sample-app/
-├── .env.production                   # cloud, payment, AI, messaging tokens
-├── src/config.js                     # Meta access token, OAuth, webhook
-├── config/service-account.json       # GCP service-account JSON, PEM block
-├── .github/workflows/deploy.yml      # CI log echo with PAT and PyPI token
-└── build/bundle.min.js.map           # JS source-map exposing original auth.ts
-```
+> 👉 Open the **[HTML report](pathname:///reports/sast-sample-app.html)** for the best
+> experience — each finding is an expandable card with the full detail.
 
-### Command
+## Reproduce it
 
 ```bash
-scan4secrets --path sample-app \
-  --report sarif json jsonl csv html excel pdf \
-  --output reports/sast-sample-app
-```
-
-### Summary
-
-| Severity | Count |
-|---|---|
-| critical | 6 |
-| high     | 7 |
-| medium   | 3 |
-| low      | 3 |
-| info     | 0 |
-| **Total**| **19** |
-
-Per-rule breakdown:
-
-| Rule | Hits |
-|---|---|
-| `github-pat-classic` | 3 |
-| `stripe-secret-live` | 2 |
-| `slack-bot-token` | 2 |
-| `slack-webhook` | 2 |
-| `generic-high-entropy-unquoted` | 2 |
-| `anthropic-key` | 1 |
-| `meta-access-token` | 1 |
-| `private-key-block` | 1 |
-| `postgres-connection-uri` | 1 |
-| `redis-connection-uri` | 1 |
-| `mongodb-connection-uri` | 1 |
-| `jwt-token` | 1 |
-| `generic-high-entropy-quoted` | 1 |
-
-### Every finding
-
-| Severity | Rule | File | Line | Redacted value |
-|---|---|---|---|---|
-| `critical` | `github-pat-classic` | `.env.production` | 12 | `ghp_********************************AAAA` |
-| `critical` | `github-pat-classic` | `.github/workflows/deploy.yml` | 10 | `ghp_********************************9988` |
-| `critical` | `github-pat-classic` | `src/config.js` | 8 | `ghp_********************************0011` |
-| `critical` | `private-key-block` | `config/service-account.json` | 5 | `----*******************----` |
-| `critical` | `stripe-secret-live` | `.env.production` | 6 | `sk_l********************************FAKE` |
-| `critical` | `stripe-secret-live` | `src/config.js` | 15 | `sk_l******************************0000` |
-| `high` | `anthropic-key` | `.env.production` | 10 | `sk-a**************************************AAAA` |
-| `high` | `meta-access-token` | `src/config.js` | 3 | `EAAB**************************************0099` |
-| `high` | `mongodb-connection-uri` | `.env.production` | 28 | `mong***************************.net` |
-| `high` | `postgres-connection-uri` | `.env.production` | 26 | `post***************************prod` |
-| `high` | `redis-connection-uri` | `.env.production` | 27 | `redi***********6379` |
-| `high` | `slack-bot-token` | `.env.production` | 15 | `xoxb******************************FAKE` |
-| `high` | `slack-bot-token` | `src/config.js` | 11 | `xoxb******************************FAKE` |
-| `medium` | `jwt-token` | `src/config.js` | 26 | `eyJh***********************************************EFAK` |
-| `medium` | `slack-webhook` | `.env.production` | 16 | `http*************************************************XXXX` |
-| `medium` | `slack-webhook` | `src/config.js` | 12 | `http*************************************************AAAA` |
-| `low` | `generic-high-entropy-quoted` | `src/config.js` | 4 | `abcd****************7890` |
-| `low` | `generic-high-entropy-unquoted` | `.env.production` | 3 | `wJal********************************EKEY` |
-| `low` | `generic-high-entropy-unquoted` | `.github/workflows/deploy.yml` | 9 | `pypi***************************************FAKE` |
-
-### Regenerate the full report locally
-
-The report artifacts are not committed to the repo. GitHub push protection flags the embedded `line_excerpt` lines (planted AWS docs example values, etc.) as real secrets. Reproduce locally to see the exact same output in all seven formats.
-
-```bash
-git clone https://github.com/m14r41/scan4secrets
-cd scan4secrets
+git clone https://github.com/m14r41/scan4secrets && cd scan4secrets
 pip install -e .
 
-# Build a fixture (or use yours)
-mkdir -p sample-app && cat > sample-app/.env.production <<'EOF'
-AWS_ACCESS_KEY_ID=AKIA<...AWS-DOCS-EXAMPLE-VALUE...>
-STRIPE_SECRET_KEY=sk_live_FAKE_FAKE_FAKE_FAKE_FAKE
-GITHUB_PAT=ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE00
-EOF
-
-# Run the same command this page describes
-scan4secrets --path sample-app \
-  --report sarif json jsonl csv html excel pdf \
+# one command — secrets + vulnerabilities across the fixture
+scan4secrets --path examples/sample-app --misconfig \
+  --report html sarif json jsonl csv excel pdf \
   --output reports/sast-sample-app
 ```
 
-Each of the seven outputs will land in `reports/`:
+That is exactly what the site runs to produce the files above (see
+[`examples/generate-sample-reports.sh`](https://github.com/m14r41/scan4secrets/blob/main/examples/generate-sample-reports.sh)).
 
-| Format | When to use |
-|---|---|
-| **SARIF** | GitHub Code Scanning, GitLab Security Dashboard, Sonar, Defect Dojo |
-| **JSON** | Tooling integration, post-processing |
-| **JSONL** | SIEM and SOAR streaming (Splunk, Datadog, Sentinel) |
-| **CSV** | Spreadsheet triage |
-| **HTML** | Sortable, filterable client view |
-| **Excel** | Pivot tables and exec summaries |
-| **PDF** | Compliance evidence packets |
+## What the run finds
 
-## Run 2, DAST against this docs site
-
-### Target
-
-`http://127.0.0.1:3000` (the same Docusaurus site you are reading, run locally).
-
-### Command
-
-```bash
-scan4secrets --url http://127.0.0.1:3000 \
-  --threads 16 --max-urls 200 --max-depth 2 --timeout 8 \
-  --no-wordlist \
-  --report sarif json jsonl csv html excel pdf \
-  --output reports/dast-localhost
-```
-
-`--no-wordlist` disables the bundled 1279-path wordlist seeding for this demo. In a real bug-bounty engagement you would leave wordlist seeding on. `--max-urls 200 --max-depth 2` keeps the run bounded for a demo.
-
-### Summary
+**24 findings — 7 secrets + 17 vulnerabilities.**
 
 | Severity | Count |
 |---|---|
-| critical | 2 |
-| high     | 0 |
-| medium   | 0 |
-| low      | 0 |
-| info     | 0 |
-| **Total**| **2** |
+| critical | 3 |
+| high | 9 |
+| medium | 10 |
+| low | 2 |
+| **Total** | **24** |
 
-### Why this is interesting
+### Secrets (7)
 
-Both findings fire on `/docs/targets/github` because that page documents the **shape** of GitHub deploy keys, and the description includes the literal anchor line:
+Detected by name-signal and **context-aware structural** rules — no vendor-shaped
+tokens required:
 
-```text
------BEGIN OPENSSH PRIVATE KEY-----
-```
+| Rule | File | What it caught |
+|---|---|---|
+| `env-named-credential-assignment` | `.env` | `AM_CLIENT_SECRET`, `SESSION_SECRET`, `DATABASE_PASSWORD`, `ENCRYPTION_KEY` — flagged on the credential-named key even at low entropy |
+| `basic-auth-credential` | `.env` | `basic_auth = "…"` |
+| `xml-secret-bearing-tag` | `config/services.xml` | secret inside a nested `<SMS_API_KEY><value>…</value>` tag **and** a split `<key>`/`<value>` pair |
 
-The detection rule `private-key-block` is doing exactly what it is supposed to do, this is a true positive **on the page content**. In a real engagement these would be triaged out as documentation false positives by passing `--exclude '**/docs/targets/**'` or by adding an `allowlist.paths` entry to the rule.
+The decoys `AM_REDIRECT_URI` (a URL) and `LOG_LEVEL=debug` are correctly **not** flagged.
 
-This is the most useful kind of demo finding because it shows two important things in one run:
+### Vulnerabilities (17)
 
-1. The scanner does fire on a real PEM anchor in any served HTML, not just in source.
-2. Documentation pages that explain attack surface need a per-rule allowlist or a `--exclude` path filter, or they will land in every report.
+Every vulnerability finding carries a CWE, an OWASP mapping, and paired
+vulnerable/secure code plus remediation and impact.
 
-### Regenerate the DAST report locally
+| Severity | Vulnerability | CWE | Language / file |
+|---|---|---|---|
+| critical | OS Command Injection | CWE-78 | Python `app.py` |
+| critical | OS Command Injection | CWE-78 | Node `server.js` |
+| critical | Kotlin OS Command Injection | CWE-78 | Kotlin `Main.kt` |
+| high | SQL Injection | CWE-89 | Python `app.py` |
+| high | SQL Injection | CWE-89 | Node `server.js` |
+| high | Server-Side Request Forgery | CWE-918 | Python `app.py` |
+| high | Disabled TLS Certificate Verification | CWE-295 | Python `app.py` |
+| high | Path Traversal | CWE-22 | Python `app.py` |
+| high | Reflected XSS | CWE-79 | Node `server.js` |
+| high | XSS via `dangerouslySetInnerHTML` | CWE-79 | React `Widget.jsx` |
+| high | Android WebView `addJavascriptInterface` | CWE-749 | Kotlin `Main.kt` |
+| high | Remote script piped to shell (`curl \| bash`) | CWE-494 | `Dockerfile` |
+| medium | Weak Cryptographic Hash (MD5) | CWE-327 | Python `app.py` |
+| medium | Open Redirect | CWE-601 | Node `server.js` |
+| medium | ASP.NET debug enabled | CWE-489 | `web.config` |
+| medium | ASP.NET `customErrors` off | CWE-209 | `web.config` |
+| medium | ASP.NET request validation disabled | CWE-20 | `web.config` |
 
-```bash
-# After installing scan4secrets and running the docs site at localhost:3000
-scan4secrets --url http://127.0.0.1:3000 \
-  --threads 16 --max-urls 200 --max-depth 2 --timeout 8 \
-  --no-wordlist \
-  --report sarif json jsonl csv html excel pdf \
-  --output reports/dast-localhost
-```
+Note the taint gating in action: `subprocess.run(["ping","-c","1","8.8.8.8"])` and
+`requests.get(url, verify=True)` in `app.py` are **not** flagged — only the
+dynamically-tainted sinks are.
 
-## How to read the output
+## How to read each format
 
-### SARIF
+### HTML — the collapsible report
 
-SARIF is the standard for code-scanning dashboards. Each finding becomes a `result` with a `ruleId`, a `physicalLocation` (file plus start line), a `level` (`error` for critical and high, `warning` for medium, `note` for low and info), and a `properties` block carrying the entropy score and the `verified` state.
+Open [sast-sample-app.html](pathname:///reports/sast-sample-app.html) in any browser.
+Each finding is an expandable **card**:
 
-```json
-{
-  "ruleId": "github-pat-classic",
-  "level": "error",
-  "message": { "text": "GitHub Personal Access Token (Classic)" },
-  "locations": [{
-    "physicalLocation": {
-      "artifactLocation": { "uri": "sample-app/.env.production" },
-      "region": { "startLine": 12 }
-    }
-  }],
-  "properties": { "entropy": 4.81, "verified": null, "redacted": "ghp_****AAAA" }
-}
-```
+- **Summary line** — severity badge, vulnerability/secret name, `file:line`, and (for vulnerabilities) the CWE.
+- **Expanded** — description, the vulnerable code, the secure-code fix, remediation, and technical & business impact; secret findings show the redacted value, entropy, and hash.
+- Controls: a **filter box**, **severity/file/name sort**, and **expand/collapse-all**. Theme-aware and fully self-contained (one file, no assets).
 
-Upload it to GitHub Code Scanning:
+By default secret values are shown in full (paste-ready for a vendor PoC); add `--mask` to redact them for screenshots.
+
+### SARIF — code-scanning dashboards
+
+Each finding is a `result` with a `ruleId`, `physicalLocation` (file + start line), a
+`level` (`error` for critical/high, `warning` for medium, `note` for low), and a
+`properties` block. Vulnerability results also carry the CWE and OWASP tags. Upload it:
 
 ```yaml
 - uses: github/codeql-action/upload-sarif@v3
   with: { sarif_file: reports/sast-sample-app.sarif }
 ```
 
-### JSONL
+### JSONL — grep / SIEM
 
-One finding per line, ready to pipe into a SIEM or transform with `jq`. The fastest format to grep against.
+One finding per line. Fastest to slice with `jq`:
 
 ```bash
-# everything critical and high, file + line + rule
 jq -r 'select(.severity=="critical" or .severity=="high")
   | [.severity, .rule_id, .file, .line] | @tsv' sast-sample-app.jsonl
 ```
 
-```text
-critical  github-pat-classic   sample-app/.env.production               12
-critical  github-pat-classic   sample-app/.github/workflows/deploy.yml  10
-critical  github-pat-classic   sample-app/src/config.js                  8
-critical  private-key-block    sample-app/config/service-account.json    5
-critical  stripe-secret-live   sample-app/.env.production                6
-critical  stripe-secret-live   sample-app/src/config.js                 15
-high      anthropic-key        sample-app/.env.production               10
-high      meta-access-token    sample-app/src/config.js                  3
-...
-```
+### JSON / CSV / Excel / PDF
 
-### HTML
+`json` is the complete structured feed; `csv` and `xlsx` are spreadsheet-friendly
+(Excel adds a pivot summary sheet); `pdf` is a stable, ASCII-safe evidence packet for
+auditors. All carry the full vulnerability record (CWE, OWASP, vulnerable/secure code).
 
-Open in any browser. The report is collapsible — each finding is an expandable card. The summary line shows severity, name, `file:line`, and (for vulnerability findings) the CWE; expanding a card reveals the full record, including vulnerable and secure code, remediation, and technical/business impact. A filter box, severity/file/name sort, and expand/collapse-all controls make triage fast. Theme-aware and self-contained. Best for sharing with a client who does not want to install anything.
+## Gate CI on findings
 
-When you scan with `--misconfig`, each vulnerability finding also carries a CWE, an OWASP mapping, and paired vulnerable/secure code plus remediation — the same fields are present across the JSON, CSV, SARIF, Excel, and PDF outputs.
-
-### CSV and Excel
-
-Same data shape, optimized for spreadsheet triage. Excel adds a summary sheet with pivot tables (severity by rule, severity by file).
-
-### PDF
-
-Compliance evidence. Stable layout, ASCII-safe encoding. Hands cleanly to an auditor.
-
-### JSON
-
-Full structured output with every finding, every rule, the run metadata, and the tool version. The most precise feed for downstream tooling that wants the complete picture.
-
-## Exit-code semantics
-
-Both runs above did not pass `--fail-on`, so the exit code was `0` regardless of finding count. Add a gate to make CI fail on real incidents.
+The run above exits `0` regardless of count. Add a gate:
 
 ```bash
-scan4secrets --path sample-app --report sarif \
-  --fail-on high \
-  --output reports/sast-sample-app
+scan4secrets --path examples/sample-app --misconfig \
+  --report sarif --fail-on high --output reports/sast-sample-app
 ```
 
-`--fail-on high` exits `1` if any finding is `high` or `critical`. The SARIF file is still produced so the dashboard upload still runs.
+`--fail-on high` exits `1` if any finding is `high` or `critical`, while still writing
+the SARIF file so the dashboard upload runs.
 
-## Reproduce this run
+## Try your own code
 
-1. Install scan4secrets ([Getting Started](./getting-started)).
-2. Pull a copy of the fixture into a temp directory or build your own.
-3. Run the two commands from this page.
-4. Diff the output against the reports linked above.
-
-The fixture used here is intentionally small, 6 files. Real engagements produce reports with hundreds to thousands of findings. The shape is identical.
+Point `--path` at any repo. Secrets-only is the default; add `--misconfig` for the
+vulnerability engine, or `--misconfig-only` to scan for vulnerabilities without secrets.
+See [Getting Started](./getting-started) and the [CLI Reference](./cli-reference).

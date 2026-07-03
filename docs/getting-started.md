@@ -58,6 +58,16 @@ scan4secrets --version
 scan4secrets --path /code
 ```
 
+By default this scans for secrets only. Add `--misconfig` to also scan for code vulnerabilities and misconfigurations, or `--misconfig-only` to scan for vulnerabilities alone:
+
+```bash
+scan4secrets --path ./src --misconfig                 # secrets + vulnerabilities
+scan4secrets --path ./src --misconfig-only            # vulnerabilities only
+scan4secrets --path . --misconfig --report html --output report
+```
+
+scan4secrets carries **416 rules total** — 193 secret rules plus 223 vulnerability / misconfiguration rules covering injection (SQL/NoSQL/command/code), SSTI, XXE, deserialization, path traversal, SSRF, XSS across 11 templating engines, weak crypto, JWT flaws, and IaC/config misconfig (Terraform, Kubernetes, Dockerfile, GitHub Actions, and more). Each vulnerability finding carries a rich record: name, severity, evidence (file:line), vulnerable code, secure code, remediation, technical & business impact, and CWE + OWASP Top-10 mapping.
+
 ### DAST. Crawl a live target
 
 ```bash
@@ -125,11 +135,13 @@ scan4secrets --path . --report sarif json jsonl csv html excel pdf --output repo
 | `json` | Tooling integrations, post-processing |
 | `jsonl` | SIEM/SOAR pipelines (Splunk, Datadog, Sentinel) |
 | `csv` | Spreadsheet triage |
-| `html` | Sortable / filterable / colored UI for client review |
+| `html` | Collapsible, expandable finding cards for client review |
 | `excel` | Pivot tables and exec summaries |
 | `pdf` | Compliance evidence packets |
 
-Secrets are **redacted by default** (`abcd****wxyz`). Use `--unsafe-show` only when reports are stored securely.
+The `html` report renders each finding as an expandable card — the summary shows severity + name + file:line + CWE, and expanding reveals the full record including vulnerable/secure code, remediation, and impacts. It ships with a filter box, severity/file/name sort, and expand/collapse-all, is theme-aware, and is fully self-contained. JSON/CSV/SARIF/Excel/PDF carry all fields.
+
+Secret values are shown **in full by default** (paste-ready for vendor PoC). Pass `--mask` to redact them to `abcd****wxyz` for screenshots or shared transcripts.
 
 ## Next
 

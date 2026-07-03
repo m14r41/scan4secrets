@@ -8,6 +8,33 @@ keywords: [scan4secrets changelog, scan4secrets v2, release notes]
 
 # Changelog
 
+## v2.2.0 — SAST vulnerability engine + structural secret detection
+
+### Added — SAST vulnerability & misconfiguration engine
+- **`--misconfig`** — in addition to secrets, scan source for vulnerabilities and misconfigurations.
+- **`--misconfig-only`** — scan for vulnerabilities/misconfigurations only, skipping secret detection.
+- New SAST engine detects (with taint/context gating for low false positives): SQLi, NoSQLi, command injection, code injection, SSTI, XXE, insecure deserialization, LFI/path traversal, LDAP and XPath injection, SSRF, open redirect, CORS misconfig, CSRF-disabled, prototype pollution, XSS across 11 templating engines plus DOM sinks, weak crypto (DES/RC4/ECB/static-IV/weak-RSA), insecure RNG, JWT flaws (alg:none/confusion/hardcoded secret/verify-off), TLS bypasses, timing-unsafe compares, SAML sig-off, hardcoded credentials, sensitive-data logging, and IaC/config misconfig (Terraform, Kubernetes, Dockerfile, GitHub Actions, ASP.NET web.config, WCF/SOAP).
+- **17 languages/formats**: python, node/js/ts, react, php, ruby, go, java, kotlin, csharp/.NET, sql, XML/WSDL, JSP, terraform, kubernetes yaml, dockerfile.
+- Each vulnerability finding carries: Vulnerability Name, Severity, Description, Evidence (file:line), Vulnerable Code, Secure Code, Remediation, Technical Impact, Business Impact, CWE, and OWASP mapping.
+- **223 new vulnerability/misconfiguration rules**, bringing the total rule count from **179 to 416** (193 secret + 223 vulnerability/misconfiguration).
+
+### Added — context-aware / structural secret detection
+- Whole-file pass catching secrets in nested XML tags, split `<key>`/`<value>` pairs, JSON key/value objects, multi-line YAML/properties, and Base64-encoded secrets.
+- Entropy-gate fix: credential-named assignments (e.g. `AM_CLIENT_SECRET=…`) are now caught on the name signal with no entropy floor, so real low-entropy secrets are no longer dropped.
+
+### Added — new secret token types
+- Slack app/user tokens, Dropbox, PlanetScale, PostHog, Supabase, Figma, GitLab runner/trigger tokens, Stripe test keys, Google OAuth refresh, Twitch, ngrok.
+
+### Changed — reporting
+- **HTML report is now collapsible** — each finding is an expandable card (summary: severity + name + file:line + CWE; expand: full record incl. vulnerable/secure code, remediation, impacts) with a filter box, severity/file/name sort, and expand/collapse-all. Theme-aware, self-contained.
+- JSON, CSV, SARIF, Excel, and PDF carry all fields, including the vulnerability record.
+
+### Examples
+```bash
+scan4secrets --path ./src --misconfig
+scan4secrets --path . --misconfig-only --report html --output report
+```
+
 ## v2.1.3 — Branded banner + live crawl progress
 
 ### Added

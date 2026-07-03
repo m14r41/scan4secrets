@@ -16,6 +16,7 @@ except ImportError:
 
 
 DEFAULT_RULES_PATH = Path(__file__).resolve().parent.parent / "config" / "rules.yaml"
+DEFAULT_VULNS_PATH = Path(__file__).resolve().parent.parent / "config" / "vulns.yaml"
 
 
 @dataclass
@@ -52,6 +53,16 @@ class Rule:
     allowlist: Allowlist = field(default_factory=Allowlist)
     verify: Optional[Verify] = None
     category: Optional[str] = None
+    # --- vulnerability-rule fields (category: vuln) ---------------------------
+    name: Optional[str] = None
+    languages: List[str] = field(default_factory=list)   # file-type gate; [] = all
+    context_required: List[str] = field(default_factory=list)  # taint hints; any-of must appear
+    cwe: Optional[str] = None
+    owasp: Optional[str] = None
+    remediation: Optional[str] = None
+    secure_code: Optional[str] = None
+    technical_impact: Optional[str] = None
+    business_impact: Optional[str] = None
 
 
 def _compile_allowlist(d: dict) -> Allowlist:
@@ -78,9 +89,12 @@ def _compile_verify(d: Optional[dict]) -> Optional[Verify]:
 
 def load_rules(path: Optional[Path] = None) -> List[Rule]:
     p = Path(path) if path else DEFAULT_RULES_PATH
-    raw = yaml.safe_load(p.read_text())
+    raw = list(yaml.safe_load(p.read_text()) or [])
+    # Auto-merge the bundled vuln ruleset unless a custom rules file was supplied.
+    if path is None and DEFAULT_VULNS_PATH.exists():
+        raw += list(yaml.safe_load(DEFAULT_VULNS_PATH.read_text()) or [])
     rules: List[Rule] = []
-    for d in raw or []:
+    for d in raw:
         try:
             rules.append(
                 Rule(
@@ -93,6 +107,15 @@ def load_rules(path: Optional[Path] = None) -> List[Rule]:
                     allowlist=_compile_allowlist(d.get("allowlist")),
                     verify=_compile_verify(d.get("verify")),
                     category=d.get("category"),
+                    name=d.get("name"),
+                    languages=[str(x).lower() for x in (d.get("languages") or [])],
+                    context_required=list(d.get("context_required") or []),
+                    cwe=d.get("cwe"),
+                    owasp=d.get("owasp"),
+                    remediation=d.get("remediation"),
+                    secure_code=d.get("secure_code"),
+                    technical_impact=d.get("technical_impact"),
+                    business_impact=d.get("business_impact"),
                 )
             )
         except (KeyError, re.error) as e:

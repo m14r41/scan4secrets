@@ -236,7 +236,9 @@ high      meta-access-token    sample-app/src/config.js                  3
 
 ### HTML
 
-Open in any browser. Severity is colored, columns are sortable, the search bar filters live. Best for sharing with a client who does not want to install anything.
+Open in any browser. The report is collapsible — each finding is an expandable card. The summary line shows severity, name, `file:line`, and (for vulnerability findings) the CWE; expanding a card reveals the full record, including vulnerable and secure code, remediation, and technical/business impact. A filter box, severity/file/name sort, and expand/collapse-all controls make triage fast. Theme-aware and self-contained. Best for sharing with a client who does not want to install anything.
+
+When you scan with `--misconfig`, each vulnerability finding also carries a CWE, an OWASP mapping, and paired vulnerable/secure code plus remediation — the same fields are present across the JSON, CSV, SARIF, Excel, and PDF outputs.
 
 ### CSV and Excel
 

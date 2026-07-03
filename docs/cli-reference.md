@@ -23,9 +23,15 @@ scan4secrets [INPUT] [SCOPE] [DAST] [AUTH] [OUTPUT] [GATE]
 | `--path PATH ...` |. | One or more local directories or files for SAST. Repeatable. |
 | `--url URL ...` |. | One or more URLs for DAST. Repeatable. |
 | `--stdin` | off | Read text from stdin and scan as a single buffer. |
-| `--rules FILE` | bundled | Override the bundled `rules.yaml` with a custom YAML file. |
+
+## Rule selection
+
+| Flag | Default | Description |
+|---|---|---|
+| `--rules FILE` | bundled | Override the bundled rule set with a custom YAML file. |
 | `--rule-id ID ...` | all | Restrict to specific rule IDs. Repeatable. |
-| `--severity LEVEL` | `info` | Minimum severity to include (info / low / medium / high / critical). |
+| `--disable-rule ID ...` | none | Disable specific rule IDs while keeping the rest active. Repeatable. |
+| `--entropy-min FLOAT` | per-rule | Global Shannon-entropy floor applied to captured values. Overrides each rule's own `entropy_min`. |
 
 ## SAST scope control
 
@@ -33,8 +39,27 @@ scan4secrets [INPUT] [SCOPE] [DAST] [AUTH] [OUTPUT] [GATE]
 |---|---|---|
 | `--exclude GLOB ...` |. | Skip files matching glob. Repeatable. |
 | `--exclude-dir DIR ...` | sensible defaults | Skip directory by name. Repeatable. |
-| `--max-size MB` | `10` | Skip files larger than this. |
-| `--no-binary-skip` | off | Disable NUL-byte binary skip heuristic. |
+| `--max-size SIZE` | `10M` | Skip files larger than this. Accepts raw bytes or a suffixed size (e.g. `10M`). |
+
+## SAST: misconfiguration / vulnerability scanning
+
+By default scan4secrets only detects secrets. These two flags turn on the source-code
+vulnerability rules (SQLi, XSS, RCE, SSRF, path traversal, insecure crypto/TLS, and more).
+Vulnerability rules are gated per file type, so they only run against files in a matching
+language.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--misconfig` | off | ALSO scan source for vulnerabilities/misconfigurations alongside secret detection. |
+| `--misconfig-only` | off | Scan ONLY for vulnerabilities/misconfigurations; skip secret detection entirely. |
+
+```bash
+# Secrets + source vulnerabilities in one pass
+scan4secrets --path ./src --misconfig --report html --output reports/audit
+
+# Vulnerability/misconfiguration audit only (no secret detection)
+scan4secrets --path ./src --misconfig-only --report sarif --fail-on high --output reports/vulns
+```
 
 ## DAST tuning
 
@@ -46,6 +71,8 @@ scan4secrets [INPUT] [SCOPE] [DAST] [AUTH] [OUTPUT] [GATE]
 | `--timeout SEC` | `15` | Per-request timeout. |
 | `--strict-host` | off | Restrict scope to exact hostname (default = eTLD+1). |
 | `--user-agent UA` | `scan4secrets/2 (+github.com/m14r41/scan4secrets)` | Override outbound UA. |
+| `--no-sourcemaps` | off | Disable `.js.map` sourcesContent extraction during crawl. |
+| `--no-js-endpoints` | off | Disable endpoint discovery from JavaScript assets. |
 | `--wordlist FILE ...` | bundled | Replace bundled wordlists with custom file(s). |
 | `--wordlist-only NAME ...` | all | Restrict to specific bundled stems. |
 | `--no-wordlist` | off | Disable wordlist seeding entirely. |
@@ -65,23 +92,24 @@ scan4secrets [INPUT] [SCOPE] [DAST] [AUTH] [OUTPUT] [GATE]
 |---|---|---|
 | `--verify` | off | Run live vendor probes on findings whose rule has a `verify:` block. |
 | `--verify-timeout SEC` | `5` | Per-probe timeout. |
-| `--verify-workers N` | `8` | Concurrent verifier workers. |
 
 ## Output
 
 | Flag | Default | Description |
 |---|---|---|
-| `--output PREFIX` | `scan` | Output path prefix (no extension). |
+| `--output BASE` | `scan` | Output path base name (no extension). |
 | `--report FMT ...` | `json` | One or more of: `sarif json jsonl csv html excel pdf`. |
-| `--unsafe-show` | off | Include raw secret values in reports (otherwise redacted). |
-| `--keep-generic` | off | Keep generic catch-all findings even when a vendor-specific rule matched. |
-| `--quiet` | off | Suppress per-finding console output. |
-| `--verbose` | off | Verbose progress logging. |
+| `--mask` | off | Redact secret values in output. Default: raw values are shown (paste-ready for vendor PoC). |
 
-## Exit-code gate
+## Logging / CI
 
 | Flag | Default | Description |
 |---|---|---|
+| `--quiet` | off | Suppress per-finding console output. |
+| `--verbose` | off | Verbose progress logging. |
+| `--debug` | off | Emit debug-level diagnostics. |
+| `--no-color` | off | Disable ANSI color in console output. |
+| `--keep-generic` | off | Keep generic catch-all findings even when a vendor-specific rule matched. |
 | `--fail-on LEVEL` | none | Exit `1` if any finding meets or exceeds this severity (info / low / medium / high / critical). |
 
 ## Examples

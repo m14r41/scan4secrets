@@ -12,7 +12,7 @@ const GA_ID = process.env.GA_ID ?? 'G-L16KL7RKER';
 
 const config: Config = {
   title: 'scan4secrets',
-  tagline: 'DAST + SAST secret scanner with live verification, source-map parsing, and CI-native reporting',
+  tagline: 'DAST + SAST scanner for leaked secrets and code vulnerabilities — live verification, source-map parsing, CI-native reporting',
   favicon: 'img/favicon.svg',
 
   url: SITE_URL,
@@ -102,8 +102,8 @@ const config: Config = {
   themeConfig: {
     image: 'img/social-card.svg',
     metadata: [
-      {name: 'keywords', content: 'secret scanner, DAST, SAST, secret detection, leaked credentials, API key scanner, token verifier, source map scanner, security tools, bug bounty, gitleaks alternative, trufflehog alternative, scan4secrets, m14r41'},
-      {name: 'description', content: 'scan4secrets — DAST + SAST secret scanner that finds and live-verifies leaked credentials in source trees, web apps, JS source-maps, and HTTP headers. SARIF / JSONL / Excel / PDF / HTML reports.'},
+      {name: 'keywords', content: 'secret scanner, DAST, SAST, secret detection, leaked credentials, API key scanner, token verifier, source map scanner, SAST vulnerability scanner, misconfiguration scanner, SQLi XSS SSRF detection, CWE, OWASP, security tools, bug bounty, gitleaks alternative, trufflehog alternative, semgrep alternative, scan4secrets, m14r41'},
+      {name: 'description', content: 'scan4secrets — DAST + SAST scanner that finds and live-verifies leaked credentials AND scans source for code vulnerabilities/misconfigurations (SQLi, XSS, SSRF, insecure crypto, IaC) with CWE/OWASP mapping. SARIF / JSONL / Excel / PDF / collapsible HTML reports.'},
       {name: 'author', content: 'm14r41'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:title', content: 'scan4secrets, DAST and SAST secret scanner'},
@@ -121,7 +121,7 @@ const config: Config = {
     },
     announcementBar: {
       id: 'release-v2',
-      content: '<b>scan4secrets v2</b> is out. 170+ rules, live verification, Windows and Linux binaries. <a href="/docs/downloads">Download</a> &nbsp;·&nbsp; <a target="_blank" rel="noopener noreferrer" href="https://github.com/m14r41/scan4secrets">Star on GitHub</a>',
+      content: '<b>scan4secrets v2</b> — 416 rules (193 secret + 223 vulnerability/misconfig), <code>--misconfig</code> SAST engine, live verification, Windows and Linux binaries. <a href="/docs/downloads">Download</a> &nbsp;·&nbsp; <a target="_blank" rel="noopener noreferrer" href="https://github.com/m14r41/scan4secrets">Star on GitHub</a>',
       backgroundColor: '#f59e0b',
       textColor: '#1f1300',
       isCloseable: true,

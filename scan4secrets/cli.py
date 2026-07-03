@@ -53,6 +53,10 @@ def _parser() -> argparse.ArgumentParser:
     sast.add_argument("--exclude", nargs="+", default=[], help="extra glob patterns to exclude")
     sast.add_argument("--exclude-dir", nargs="+", default=[], help="extra directory names to skip")
     sast.add_argument("--max-size", default=str(DEFAULT_MAX_BYTES), help="skip files larger than (bytes or e.g. 10M)")
+    sast.add_argument("--misconfig", action="store_true",
+                      help="also scan source for vulnerabilities/misconfigurations (SQLi, XSS, RCE, SSRF, path traversal, insecure crypto/TLS, ...)")
+    sast.add_argument("--misconfig-only", action="store_true",
+                      help="scan ONLY for vulnerabilities/misconfigurations (skip secret detection)")
 
     dast = p.add_argument_group("DAST (web)")
     dast.add_argument("--threads", type=int, default=16)
@@ -212,8 +216,15 @@ def main(argv=None) -> int:
             _ok(console, f"stdin scanned ({len(text)} bytes)")
 
     if args.path:
+        cats = set()
+        if not args.misconfig_only:
+            cats |= {None, "secret"}
+        if args.misconfig or args.misconfig_only:
+            cats.add("vuln")
         if not args.quiet:
-            _info(console, f"[bold]SAST[/] scanning [bold]{args.path}[/]")
+            mode = "secrets+misconfig" if "vuln" in cats and "secret" in cats else \
+                   "misconfig-only" if "vuln" in cats else "secrets"
+            _info(console, f"[bold]SAST[/] scanning [bold]{args.path}[/] [dim]({mode})[/]")
         exclude_dirs = DEFAULT_SKIP_DIRS | set(args.exclude_dir)
         before = len(findings)
         findings.extend(scan_path(
@@ -221,6 +232,7 @@ def main(argv=None) -> int:
             exclude_dirs=exclude_dirs,
             exclude_globs=args.exclude,
             max_bytes=_parse_size(args.max_size),
+            enabled_categories=frozenset(cats),
         ))
         if not args.quiet:
             _ok(console, f"SAST complete -- [bold]{len(findings) - before}[/] raw findings")

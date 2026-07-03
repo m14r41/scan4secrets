@@ -1,14 +1,14 @@
 # scan4secrets
 
-**DAST + SAST secret scanner with live verification, source-map parsing, and CI-native reporting.**
+**DAST + SAST secret scanner with live verification, source-map parsing, and CI-native reporting — plus a SAST vulnerability & misconfiguration engine.**
 
-Find leaked credentials in source trees, running web apps, and CI logs. Verify them live against vendor APIs. Output SARIF for code-scanning dashboards, JSONL for SOAR pipelines, or Excel/PDF/HTML for client reports.
+Find leaked credentials in source trees, running web apps, and CI logs. Verify them live against vendor APIs. Scan the same source trees for code vulnerabilities and misconfigurations. Output SARIF for code-scanning dashboards, JSONL for SOAR pipelines, or Excel/PDF/HTML for client reports.
 
 ---
 
 ## Why scan4secrets
 
-The crowded landscape (`gitleaks`, `trufflehog`, `detect-secrets`) is great at SAST on git trees but stops there. **scan4secrets fills the gaps they don't cover**:
+The crowded landscape (`gitleaks`, `trufflehog`, `detect-secrets`) is great at SAST on git trees but stops there — and they scan for secrets only. **scan4secrets fills the gaps they don't cover**, adding live web DAST, live vendor verification, and a code-vulnerability / misconfiguration engine on top of secret detection:
 
 | Capability | gitleaks | trufflehog | detect-secrets | **scan4secrets** |
 |---|:---:|:---:|:---:|:---:|
@@ -23,6 +23,7 @@ The crowded landscape (`gitleaks`, `trufflehog`, `detect-secrets`) is great at S
 | Entropy gate + allowlist | Y | Y | Y | Y |
 | YAML rules schema | - (TOML) | - | - | Y |
 | Authenticated DAST (cookie/header/proxy) | n/a | n/a | n/a | Y |
+| **SAST vulnerability / misconfiguration detection** | - | - | - | Y |
 
 It is a **complement to gitleaks**, not a replacement. Use both: gitleaks in pre-commit + CI for git-history SAST, scan4secrets for live DAST against staging/production.
 
@@ -85,13 +86,45 @@ scan4secrets --url https://app.example.com \
 # CI gate (exit 1 if anything >= high)
 scan4secrets --path . --report sarif --fail-on high \
     --output reports/scan
+
+# SAST: secrets + code vulnerabilities / misconfigurations
+scan4secrets --path ./src --misconfig
+
+# SAST: vulnerabilities / misconfigurations only (skip secret detection)
+scan4secrets --path ./src --misconfig-only
 ```
+
+---
+
+## Vulnerability & misconfiguration scanning (`--misconfig`)
+
+Beyond secrets, scan4secrets ships a SAST engine for code vulnerabilities and misconfigurations. Add `--misconfig` to scan for both secrets and vulnerabilities, or `--misconfig-only` to scan for vulnerabilities alone:
+
+```bash
+scan4secrets --path ./src --misconfig                 # secrets + vulnerabilities
+scan4secrets --path ./src --misconfig-only            # vulnerabilities only
+scan4secrets --path . --misconfig --report html --output report
+```
+
+It detects — with taint/context gating to keep false positives low — SQL injection, NoSQL injection, OS command injection, code injection (eval), SSTI, XXE, insecure deserialization, LFI / path traversal, LDAP & XPath injection, SSRF, open redirect, CORS misconfig, CSRF-disabled, prototype pollution, XSS (reflected/stored/DOM across 11 templating engines: EJS, Handlebars, Pug, Jinja, Thymeleaf, Razor, Blade, ERB, Vue, Angular, React), weak crypto (DES/RC4/ECB/static-IV/weak-RSA), insecure randomness, JWT flaws (alg:none, algorithm confusion, hardcoded signing secret, verification disabled), TLS bypasses, timing-unsafe secret comparisons, SAML signature-not-required, hardcoded credentials, sensitive-data logging, and IaC/config misconfig (Terraform, Kubernetes, Dockerfile, GitHub Actions, ASP.NET web.config, WCF/SOAP).
+
+Languages covered: python, node, javascript, typescript, react, php, ruby, go, java, kotlin, csharp/.NET, sql, plus XML/WSDL, JSP, Terraform/HCL, Kubernetes YAML, and Dockerfile.
+
+Each vulnerability finding carries a rich record: **Vulnerability Name, Severity, Description, Evidence (file:line), Vulnerable Code, Secure Code, Remediation, Technical Impact, Business Impact, and CWE + OWASP Top-10 mapping.**
+
+---
+
+## Context-aware secret detection
+
+Beyond the line-by-line engine, a whole-file pass catches secrets that line-scanners miss: nested XML tags (`<SMS_API_KEY><value>…</value></SMS_API_KEY>`), split `<key>`/`<value>` pairs, JSON key/value objects, multi-line YAML/properties, and Base64-encoded secrets. It also closes an entropy-gate blind spot — credential-named assignments (e.g. `AM_CLIENT_SECRET=…`) are flagged on the **name** signal with no entropy floor, so real low-entropy secrets are no longer silently dropped.
 
 ---
 
 ## What it detects
 
-170+ rules covering:
+**416 rules total** — 193 secret rules + 223 vulnerability / misconfiguration rules.
+
+Secret rules cover:
 
 - **Cloud:** AWS, GCP, Azure, DigitalOcean, Heroku, Linode, Vultr, Hetzner, Alibaba, IBM Cloud, Oracle Cloud, Render, Vercel, Netlify, Fly.io
 - **CDN / edge:** Cloudflare (API token + Origin CA), Fastly, Cloudinary, Akamai EdgeGrid, BunnyCDN
@@ -118,9 +151,10 @@ scan4secrets --path . --report sarif --fail-on high \
 - **Webhooks:** Zapier, IFTTT, Meta / Facebook Graph
 - **Auth tokens:** JWT, HTTP Basic in URLs
 - **Crypto:** RSA / EC / OPENSSH / PGP private keys, SSH public keys, Cloudflare Origin CA, GitHub deploy keys
+- **Recently added:** Slack app / user tokens, Dropbox, PlanetScale, PostHog, Supabase, Figma, GitLab runner / pipeline-trigger tokens, Stripe test keys, Google OAuth refresh tokens, Twitch, ngrok
 - **Contextual fallbacks:** quoted/unquoted high-entropy strings, hex tokens, UUIDs near credential names
 
-See [docs/RULES.md](docs/RULES.md) for the full reference and how to add custom rules.
+See [docs/rules-engine.md](docs/rules-engine.md) for the full reference and how to add custom rules.
 
 ---
 
@@ -137,7 +171,7 @@ With `--verify`, scan4secrets makes one HTTP request per detected token to the v
 
 Each finding gets `verified=true|false|null` in every output format. A verified token is incident-grade evidence; an unverified one is a hypothesis.
 
-See [docs/VERIFICATION.md](docs/VERIFICATION.md) for the full vendor list and how to add probes.
+See [docs/verification.md](docs/verification.md) for the full vendor list and how to add probes.
 
 ---
 
@@ -153,9 +187,11 @@ scan4secrets --path . --report sarif json jsonl csv html excel pdf --output repo
 | `json` | Tooling integrations, post-processing |
 | `jsonl` | SIEM/SOAR pipelines (Splunk, Datadog, Sentinel) |
 | `csv` | Spreadsheet triage |
-| `html` | Sortable / filterable / colored UI for client review |
+| `html` | Collapsible, expandable finding cards for client review |
 | `excel` | Pivot tables and exec summaries |
 | `pdf` | Compliance evidence packets |
+
+The `html` report renders each finding as an expandable card — the summary shows severity + name + file:line + CWE, and expanding reveals the full record including vulnerable/secure code, remediation, and impacts. It ships with a filter box, severity/file/name sort, expand/collapse-all, is theme-aware, and is fully self-contained. JSON/CSV/SARIF/Excel/PDF carry all fields.
 
 Secrets are shown **in full by default** so reports are paste-ready for vendor PoC. Pass `--mask` to redact to `abcd****wxyz` for screenshots or shared transcripts.
 
@@ -205,11 +241,11 @@ GitHub Actions:
 
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — package layout, data flow, extension points
-- [docs/RULES.md](docs/RULES.md) — rule schema, examples, writing custom rules
-- [docs/VERIFICATION.md](docs/VERIFICATION.md) — how live verification works, adding new vendors
-- [docs/CHANGELOG.md](docs/CHANGELOG.md) — what's new in v2 vs v1
-- [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) — empirical comparison vs v1 and gitleaks
+- [docs/architecture.md](docs/architecture.md) — package layout, data flow, extension points
+- [docs/rules-engine.md](docs/rules-engine.md) — rule schema, examples, writing custom rules
+- [docs/verification.md](docs/verification.md) — how live verification works, adding new vendors
+- [docs/changelog.md](docs/changelog.md) — what's new in v2 vs v1
+- [docs/gap-analysis.md](docs/gap-analysis.md) — empirical comparison vs v1 and gitleaks
 
 ---
 

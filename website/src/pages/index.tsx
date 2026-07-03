@@ -46,9 +46,9 @@ function Hero(): React.ReactElement {
     <header className={clsx(styles.hero)}>
       <div className={styles.heroGlow} aria-hidden="true" />
       <div className="container">
-        <div className={styles.heroBadge}>v2 &nbsp;·&nbsp; 170+ rules &nbsp;·&nbsp; live verification</div>
+        <div className={styles.heroBadge}>416 rules &nbsp;·&nbsp; secrets + vulnerabilities &nbsp;·&nbsp; live verification</div>
         <h1 className={styles.heroTitle}>
-          Find <span className={styles.accent}>leaked secrets</span> across code, web apps, and CI.
+          Find <span className={styles.accent}>leaked secrets</span> and vulnerabilities across code, web apps, and CI.
         </h1>
         <p className={styles.heroSub}>{siteConfig.tagline}</p>
         <div className={styles.heroCtaRow}>
@@ -97,6 +97,7 @@ type Row = readonly [string, boolean, boolean, boolean, boolean];
 
 const COMPARE_ROWS: readonly Row[] = [
   ['SAST secret detection', true, true, true, true],
+  ['SAST vulnerability & misconfig scanning', false, false, false, true],
   ['DAST live web crawl', false, false, false, true],
   ['JS source-map parsing', false, false, false, true],
   ['JS endpoint extraction', false, false, false, true],
@@ -157,10 +158,10 @@ function ComparisonTable(): React.ReactElement {
 
 function StatsBand(): React.ReactElement {
   const stats = [
-    {n: '170+', l: 'Detection rules'},
-    {n: '1279', l: 'DAST wordlist paths'},
+    {n: '416', l: 'Detection rules'},
+    {n: '223', l: 'Vulnerability & misconfig rules'},
     {n: '7', l: 'Report formats'},
-    {n: '20+', l: 'Live vendor probes'},
+    {n: '17', l: 'Languages scanned'},
   ];
   return (
     <section className={styles.statsBand}>

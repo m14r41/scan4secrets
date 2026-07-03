@@ -20,15 +20,29 @@ const Features: Feature[] = [
     ),
   },
   {
-    title: '170+ rules out of the box',
-    body: 'Cloud, payments, AI/ML, messaging, monitoring, databases, JWT, PEM keys. Add your own with a YAML block. No code change.',
+    title: '416 rules out of the box',
+    body: '193 secret rules plus 223 vulnerability and misconfiguration rules. Cloud, payments, AI/ML, messaging, monitoring, databases, JWT, PEM keys. Add your own with a YAML block. No code change.',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
     ),
   },
   {
+    title: 'SAST vulnerability & misconfig scanning',
+    body: 'Run --misconfig to also find SQLi, command injection, SSTI, XXE, deserialization, SSRF, XSS, weak crypto, JWT flaws, and IaC misconfig across 17 languages. Each finding carries CWE, OWASP, and secure-code remediation.',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+    ),
+  },
+  {
+    title: 'Context-aware secret detection',
+    body: 'A whole-file pass catches secrets in nested XML tags, split key/value pairs, JSON objects, multi-line YAML/properties, and Base64. Credential-named assignments are caught with no entropy floor, so low-entropy secrets are not dropped.',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h2"/><path d="M18 3h2a2 2 0 0 1 2 2v2"/><path d="M22 17v2a2 2 0 0 1-2 2h-2"/><path d="M8 21H6a2 2 0 0 1-2-2v-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    ),
+  },
+  {
     title: 'CI native reporting',
-    body: 'SARIF for GitHub code-scanning, JSONL for SOAR, Excel and PDF and HTML for client reports. Exit-code gate on severity.',
+    body: 'SARIF for GitHub code-scanning, JSONL for SOAR, Excel and PDF for client reports, and a collapsible HTML report with expandable per-finding cards. Exit-code gate on severity.',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
     ),
@@ -54,7 +68,7 @@ export default function HomepageFeatures(): React.ReactElement {
     <section className={styles.features}>
       <div className="container">
         <h2 className={styles.title}>What makes it different</h2>
-        <p className={styles.subtitle}>Six things gitleaks, trufflehog, and detect-secrets cannot do.</p>
+        <p className={styles.subtitle}>Things gitleaks, trufflehog, and detect-secrets cannot do.</p>
         <div className={styles.grid}>
           {Features.map((f, i) => (
             <div key={i} className={clsx('card', styles.card)}>

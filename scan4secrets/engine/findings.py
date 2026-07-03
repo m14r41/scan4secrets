@@ -20,12 +20,22 @@ class Finding:
     source: str = "sast"
     commit: Optional[str] = None
     rule_category: Optional[str] = None
+    # --- vulnerability metadata (populated for category=vuln findings) ---------
+    name: Optional[str] = None            # human vulnerability name
+    cwe: Optional[str] = None
+    owasp: Optional[str] = None
+    remediation: Optional[str] = None
+    secure_code: Optional[str] = None
+    vulnerable_code: Optional[str] = None
+    technical_impact: Optional[str] = None
+    business_impact: Optional[str] = None
     secret_sha256: str = field(init=False)
     secret_redacted: str = field(init=False)
 
     def __post_init__(self):
         self.secret_sha256 = hashlib.sha256(self.secret.encode("utf-8", "ignore")).hexdigest()
-        self.secret_redacted = redact(self.secret)
+        # Vulnerability findings carry no secret to hide — show the matched code as-is.
+        self.secret_redacted = self.secret if self.rule_category == "vuln" else redact(self.secret)
 
     def dedup_key(self):
         return (self.file, self.line, self.secret_sha256, self.rule_id)
@@ -34,6 +44,9 @@ class Finding:
         d = asdict(self)
         if not unsafe:
             d.pop("secret", None)
+            # don't let the surrounding line leak the raw secret when masked
+            if self.rule_category != "vuln" and self.secret and self.secret in self.line_excerpt:
+                d["line_excerpt"] = self.line_excerpt.replace(self.secret, self.secret_redacted)
         return d
 
 

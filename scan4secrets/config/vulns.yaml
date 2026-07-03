@@ -1,0 +1,5502 @@
+# scan4secrets — SAST vulnerability / misconfiguration rules (category: vuln).
+# Activated with --misconfig (adds to secret scan) or --misconfig-only.
+#
+# Extra schema fields beyond the secret rules:
+#   category: vuln            required — routes the rule to the misconfig engine
+#   name                      human vulnerability name (report "Vulnerability Name")
+#   languages                 file-type gate ([] = all). e.g. [python], [node, react]
+#   context_required          taint hints; >=1 must appear on the line (cuts FP on
+#                             safe literal usage). Omit for inherently-dangerous sinks.
+#   cwe / owasp               mappings for the report
+#   remediation / secure_code / technical_impact / business_impact  report fields
+#
+# Detection is line-based sink+taint. The FIRST regex match on a line is the
+# evidence; the full line is captured as vulnerable_code.
+
+# ============================ Python ============================
+
+- id: py-command-injection
+  category: vuln
+  name: OS Command Injection
+  description: Shell command built from dynamic input via os.system/subprocess/os.popen
+  severity: critical
+  languages: [python]
+  keywords: ["os.system", "subprocess", "os.popen", "commands.getoutput"]
+  regex: '(?:os\.system|os\.popen|subprocess\.(?:call|run|Popen|check_output|check_call)|commands\.getoutput)\s*\('
+  context_required: ["+", "%", ".format(", "f\"", "f'", "request.", "req.", "args", "argv", "input(", "params", "os.environ", "shell=True"]
+  cwe: CWE-78
+  owasp: "A03:2021 Injection"
+  remediation: Never build a shell string from input. Pass an argument list and avoid shell=True.
+  secure_code: |
+    subprocess.run(["ping", "-c", "1", host], shell=False, check=True)
+  technical_impact: Arbitrary command execution as the app user; full host compromise, lateral movement.
+  business_impact: Complete server takeover, data theft, ransomware staging, regulatory breach.
+
+- id: py-code-injection-eval
+  category: vuln
+  name: Code Injection (eval/exec)
+  description: Dynamic code execution via eval/exec
+  severity: high
+  languages: [python]
+  keywords: ["eval(", "exec("]
+  regex: '(?<![\w.])(?:eval|exec)\s*\('
+  context_required: ["+", "%", ".format(", "f\"", "f'", "request.", "req.", "args", "input(", "params"]
+  allowlist:
+    regex: ["ast\\.literal_eval", "\\.eval\\("]
+  cwe: CWE-95
+  owasp: "A03:2021 Injection"
+  remediation: Do not eval input. Use ast.literal_eval for data, or an explicit dispatch table.
+  secure_code: |
+    import ast
+    value = ast.literal_eval(user_supplied)   # data only, never code
+  technical_impact: Arbitrary Python execution in-process.
+  business_impact: Full application compromise and data exfiltration.
+
+- id: py-sql-injection
+  category: vuln
+  name: SQL Injection
+  description: SQL string built with %/format/f-string/concatenation instead of parameters
+  severity: high
+  languages: [python]
+  keywords: ["execute(", "executemany(", "cursor", "raw(", "text("]
+  regex: '(?:\.execute|\.executemany|\.raw|sqlalchemy\.text)\s*\(\s*(?:f?["'']).*(?:SELECT|INSERT|UPDATE|DELETE|WHERE|FROM)'
+  context_required: ["+", "%", ".format(", "f\"", "f'", "{"]
+  cwe: CWE-89
+  owasp: "A03:2021 Injection"
+  remediation: Use parameterized queries — pass values as the second argument, never interpolate.
+  secure_code: |
+    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+  technical_impact: Read/modify arbitrary DB rows, authentication bypass, possible RCE via stacked queries.
+  business_impact: Mass data breach, account takeover, data integrity loss.
+
+- id: py-deserialization
+  category: vuln
+  name: Insecure Deserialization
+  description: Untrusted data deserialized via pickle/yaml.load/marshal
+  severity: high
+  languages: [python]
+  keywords: ["pickle.load", "pickle.loads", "yaml.load", "marshal.load", "cPickle"]
+  regex: '(?:pickle\.loads?|cPickle\.loads?|marshal\.loads?|yaml\.load)\s*\('
+  allowlist:
+    regex:
+      - 'yaml\.load\([^)]*Loader\s*=\s*(?:yaml\.)?(?:Safe|CSafe|Base)Loader'
+      - 'yaml\.safe_load'
+  cwe: CWE-502
+  owasp: "A08:2021 Software and Data Integrity Failures"
+  remediation: Use yaml.safe_load; never unpickle untrusted data. Prefer JSON for data interchange.
+  secure_code: |
+    data = yaml.safe_load(stream)          # not yaml.load
+    obj = json.loads(payload)              # not pickle.loads
+  technical_impact: Remote code execution during object reconstruction.
+  business_impact: Server compromise from any attacker-influenced serialized blob.
+
+- id: py-ssrf
+  category: vuln
+  name: Server-Side Request Forgery (SSRF)
+  description: Outbound HTTP request to a URL derived from user input
+  severity: high
+  languages: [python]
+  keywords: ["requests.get", "requests.post", "requests.request", "urlopen", "httpx.", "aiohttp"]
+  regex: '(?:requests\.(?:get|post|put|request|head)|urllib\.request\.urlopen|urlopen|httpx\.(?:get|post))\s*\('
+  context_required: ["request.", "req.", "args", "params", "input(", "+", ".format(", "f\"", "f'"]
+  cwe: CWE-918
+  owasp: "A10:2021 Server-Side Request Forgery"
+  remediation: Allowlist destination hosts/schemes; block link-local/metadata ranges (169.254.169.254).
+  secure_code: |
+    host = urlparse(url).hostname
+    if host not in ALLOWED_HOSTS: abort(400)
+  technical_impact: Access to internal services, cloud metadata credential theft.
+  business_impact: Cloud account takeover via stolen instance credentials.
+
+- id: py-path-traversal
+  category: vuln
+  name: Path Traversal
+  description: File path built from request input without normalization
+  severity: high
+  languages: [python]
+  keywords: ["open(", "send_file", "os.path.join", "Path("]
+  regex: '(?:open|send_file|send_from_directory)\s*\('
+  context_required: ["request.", "req.", "args", "params", "filename", "..", "+", ".format(", "f\"", "f'"]
+  cwe: CWE-22
+  owasp: "A01:2021 Broken Access Control"
+  remediation: Resolve the real path and confirm it stays within an allowed base dir.
+  secure_code: |
+    base = Path("/srv/data").resolve()
+    target = (base / name).resolve()
+    if base not in target.parents: abort(403)
+  technical_impact: Read/write arbitrary files (/etc/passwd, source, keys).
+  business_impact: Source/secret disclosure, config tampering.
+
+- id: py-weak-hash
+  category: vuln
+  name: Weak Cryptographic Hash
+  description: MD5/SHA1 used for security-sensitive hashing
+  severity: medium
+  languages: [python]
+  keywords: ["hashlib.md5", "hashlib.sha1", "md5(", "sha1("]
+  regex: 'hashlib\.(?:md5|sha1)\s*\('
+  allowlist:
+    regex: ["usedforsecurity\\s*=\\s*False"]
+  cwe: CWE-327
+  owasp: "A02:2021 Cryptographic Failures"
+  remediation: Use SHA-256+ for integrity; use bcrypt/scrypt/argon2 for passwords.
+  secure_code: |
+    hashlib.sha256(data).hexdigest()
+    bcrypt.hashpw(pw, bcrypt.gensalt())    # passwords
+  technical_impact: Collision/preimage attacks; fast password cracking.
+  business_impact: Credential compromise, integrity bypass.
+
+- id: py-insecure-tls
+  category: vuln
+  name: Disabled TLS Certificate Verification
+  description: TLS verification turned off (verify=False / unverified context)
+  severity: high
+  languages: [python]
+  keywords: ["verify=False", "_create_unverified_context", "CERT_NONE"]
+  regex: '(?:verify\s*=\s*False|ssl\._create_unverified_context|ssl\.CERT_NONE)'
+  cwe: CWE-295
+  owasp: "A02:2021 Cryptographic Failures"
+  remediation: Leave verification enabled; pin/verify against a trusted CA bundle.
+  secure_code: |
+    requests.get(url, verify=True)         # or verify="/path/ca-bundle.pem"
+  technical_impact: Man-in-the-middle interception of "encrypted" traffic.
+  business_impact: Credential/session theft over hostile networks.
+
+- id: py-ssti
+  category: vuln
+  name: Server-Side Template Injection (SSTI)
+  description: Template rendered from a string built with user input
+  severity: high
+  languages: [python]
+  keywords: ["render_template_string", "Template(", "from_string"]
+  regex: '(?:render_template_string|Template|env\.from_string)\s*\('
+  context_required: ["+", "%", ".format(", "f\"", "f'", "request.", "req.", "args", "params"]
+  cwe: CWE-1336
+  owasp: "A03:2021 Injection"
+  remediation: Render static template files and pass input as context variables only.
+  secure_code: |
+    render_template("hello.html", name=user_name)   # not string-built
+  technical_impact: Template-engine sandbox escape to RCE.
+  business_impact: Full server compromise.
+
+- id: py-flask-debug
+  category: vuln
+  name: Debug Mode Enabled
+  description: Flask/Django debug server enabled (Werkzeug console = RCE)
+  severity: medium
+  languages: [python]
+  keywords: ["debug=True", "DEBUG = True", "DEBUG=True"]
+  regex: '(?:app\.run\([^)]*debug\s*=\s*True|DEBUG\s*=\s*True)'
+  cwe: CWE-489
+  owasp: "A05:2021 Security Misconfiguration"
+  remediation: Disable debug in production; drive it from an env var defaulting to False.
+  secure_code: |
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")
+  technical_impact: Interactive debugger allows arbitrary code execution and info disclosure.
+  business_impact: Trivial production RCE and data exposure.
+
+# ============================ Node / JavaScript ============================
+
+- id: node-command-injection
+  category: vuln
+  name: OS Command Injection
+  description: child_process shell exec built from dynamic input
+  severity: critical
+  languages: [node]
+  keywords: ["exec(", "execSync(", "spawn(", "spawnSync(", "child_process"]
+  regex: '(?:child_process\.)?(?:exec|execSync|spawn|spawnSync)\s*\('
+  context_required: ["+", "`", "${", "req.", "request.", "params", "query", "body", "argv", "process.env"]
+  cwe: CWE-78
+  owasp: "A03:2021 Injection"
+  remediation: Use execFile/spawn with an argument array and shell:false; never concatenate.
+  secure_code: |
+    execFile("ping", ["-c", "1", host], (e, out) => { ... })
+  technical_impact: Arbitrary command execution on the server.
+  business_impact: Full host takeover and data breach.
+
+- id: node-code-injection-eval
+  category: vuln
+  name: Code Injection (eval / new Function)
+  description: Dynamic JS execution via eval or the Function constructor
+  severity: high
+  languages: [node, react]
+  keywords: ["eval(", "new Function", "setTimeout(", "setInterval("]
+  regex: '(?:\beval\s*\(|new\s+Function\s*\(|set(?:Timeout|Interval)\s*\(\s*["''`][^"''`]*\+)'
+  context_required: ["+", "`", "${", "req.", "request.", "params", "query", "body", "location", "input"]
+  cwe: CWE-95
+  owasp: "A03:2021 Injection"
+  remediation: Remove eval/Function on dynamic strings; use JSON.parse or a dispatch map.
+  secure_code: |
+    const obj = JSON.parse(payload);       // not eval('(' + payload + ')')
+  technical_impact: Arbitrary JavaScript execution.
+  business_impact: Application compromise, client or server side.
+
+- id: node-sql-injection
+  category: vuln
+  name: SQL Injection
+  description: SQL built with string concatenation / template literals
+  severity: high
+  languages: [node]
+  keywords: ["query(", "execute(", "knex.raw", "sequelize.query", ".raw("]
+  regex: '(?:\.query|\.execute|\.raw|sequelize\.query)\s*\(\s*[`"''].*(?:SELECT|INSERT|UPDATE|DELETE|WHERE|FROM)'
+  context_required: ["+", "${", "`"]
+  cwe: CWE-89
+  owasp: "A03:2021 Injection"
+  remediation: Use parameterized queries / bound placeholders.
+  secure_code: |
+    db.query("SELECT * FROM users WHERE id = ?", [userId]);
+  technical_impact: Full database read/write, auth bypass.
+  business_impact: Mass data breach and account takeover.
+
+- id: node-nosql-injection
+  category: vuln
+  name: NoSQL Injection
+  description: Mongo query built from request objects or using $where with input
+  severity: high
+  languages: [node]
+  keywords: ["$where", ".find(", ".findOne(", "$function"]
+  regex: '(?:\$where|\$function)\s*:'
+  context_required: ["req.", "request.", "params", "query", "body", "+", "${", "`"]
+  cwe: CWE-943
+  owasp: "A03:2021 Injection"
+  remediation: Cast inputs to expected types; avoid $where/$function; validate with a schema.
+  secure_code: |
+    User.findOne({ username: String(req.body.username) });
+  technical_impact: Authentication bypass and data extraction.
+  business_impact: Account takeover, data breach.
+
+- id: node-ssrf
+  category: vuln
+  name: Server-Side Request Forgery (SSRF)
+  description: Outbound request to a URL from request input
+  severity: high
+  languages: [node]
+  keywords: ["axios.", "fetch(", "http.get", "https.get", "request(", "got("]
+  regex: '(?:axios\.(?:get|post|request)|fetch|https?\.get|got|request)\s*\('
+  context_required: ["req.", "request.", "params", "query", "body", "+", "${", "`"]
+  cwe: CWE-918
+  owasp: "A10:2021 Server-Side Request Forgery"
+  remediation: Allowlist hosts/schemes; block internal and metadata IP ranges.
+  secure_code: |
+    if (!ALLOWED.has(new URL(url).hostname)) return res.sendStatus(400);
+  technical_impact: Internal service access, cloud metadata credential theft.
+  business_impact: Cloud account compromise.
+
+- id: node-path-traversal
+  category: vuln
+  name: Path Traversal
+  description: Filesystem path from request input without containment check
+  severity: high
+  languages: [node]
+  keywords: ["readFile", "writeFile", "createReadStream", "createWriteStream", "sendFile"]
+  regex: '(?:fs\.)?(?:readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream)\s*\(|res\.sendFile\s*\('
+  context_required: ["req.", "request.", "params", "query", "body", "+", "${", "`", ".."]
+  cwe: CWE-22
+  owasp: "A01:2021 Broken Access Control"
+  remediation: Resolve and confirm the path stays under an allowed base directory.
+  secure_code: |
+    const p = path.resolve(BASE, name);
+    if (!p.startsWith(BASE + path.sep)) return res.sendStatus(403);
+  technical_impact: Arbitrary file read/write.
+  business_impact: Source/secret disclosure, tampering.
+
+- id: node-insecure-tls
+  category: vuln
+  name: Disabled TLS Certificate Verification
+  description: TLS verification disabled in Node HTTPS/agent
+  severity: high
+  languages: [node]
+  keywords: ["rejectUnauthorized", "NODE_TLS_REJECT_UNAUTHORIZED"]
+  regex: '(?:rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*["'']?0)'
+  cwe: CWE-295
+  owasp: "A02:2021 Cryptographic Failures"
+  remediation: Keep rejectUnauthorized true; supply a proper CA if using internal certs.
+  secure_code: |
+    https.request({ ...opts, rejectUnauthorized: true });
+  technical_impact: MITM interception of TLS traffic.
+  business_impact: Credential/session theft.
+
+- id: node-weak-crypto
+  category: vuln
+  name: Weak Cryptographic Hash
+  description: MD5/SHA1 used via crypto.createHash
+  severity: medium
+  languages: [node]
+  keywords: ["createHash"]
+  regex: 'createHash\s*\(\s*["''](?:md5|sha1)["'']'
+  cwe: CWE-327
+  owasp: "A02:2021 Cryptographic Failures"
+  remediation: Use sha256+; use bcrypt/scrypt/argon2 for passwords.
+  secure_code: |
+    crypto.createHash("sha256").update(data).digest("hex");
+  technical_impact: Collision attacks, fast password cracking.
+  business_impact: Integrity bypass, credential compromise.
+
+- id: node-open-redirect
+  category: vuln
+  name: Open Redirect
+  description: Redirect target taken directly from request input
+  severity: medium
+  languages: [node, react]
+  keywords: ["res.redirect", "location.href", "location.replace", "window.location", "res.location"]
+  regex: '(?:res\.redirect|res\.location|window\.location(?:\.href|\.replace)?|location\.href)\s*(?:\(|=)'
+  context_required: ["req.", "request.", "params", "query", "body", "location.search", "+", "${", "`"]
+  cwe: CWE-601
+  owasp: "A01:2021 Broken Access Control"
+  remediation: Allowlist redirect targets or restrict to same-origin relative paths.
+  secure_code: |
+    const dest = SAFE_PATHS.has(req.query.next) ? req.query.next : "/";
+    res.redirect(dest);
+  technical_impact: Phishing and OAuth token theft via attacker-controlled redirect.
+  business_impact: Credential/token theft, brand abuse.
+
+# ============================ React / DOM ============================
+
+- id: react-dangerous-innerhtml
+  category: vuln
+  name: Cross-Site Scripting (dangerouslySetInnerHTML)
+  description: Raw HTML injected into the DOM via dangerouslySetInnerHTML
+  severity: high
+  languages: [react]
+  keywords: ["dangerouslySetInnerHTML"]
+  regex: 'dangerouslySetInnerHTML\s*=\s*\{\{'
+  allowlist:
+    regex: ["DOMPurify\\.sanitize", "sanitize(Html|)\\("]
+  cwe: CWE-79
+  owasp: "A03:2021 Injection"
+  remediation: Render as text, or sanitize with DOMPurify before injecting.
+  secure_code: |
+    <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
+  technical_impact: Script execution in the victim's session (XSS).
+  business_impact: Account takeover, session theft, defacement.
+
+- id: dom-xss-sink
+  category: vuln
+  name: DOM-based XSS
+  description: Untrusted value written to a DOM HTML sink
+  severity: high
+  languages: [node, react, html]
+  keywords: ["innerHTML", "outerHTML", "document.write", "insertAdjacentHTML"]
+  regex: '(?:\.innerHTML|\.outerHTML|document\.write|insertAdjacentHTML)\s*(?:=|\()'
+  context_required: ["location", "req.", "query", "params", "input", "value", "+", "${", "`", "hash", "search"]
+  allowlist:
+    regex: ["DOMPurify\\.sanitize", "textContent"]
+  cwe: CWE-79
+  owasp: "A03:2021 Injection"
+  remediation: Use textContent, or sanitize with DOMPurify before assigning HTML.
+  secure_code: |
+    el.textContent = userInput;            // not el.innerHTML = userInput
+  technical_impact: Client-side script execution (XSS).
+  business_impact: Session/account theft.
+
+# ============================ SQL / PL/pgSQL ============================
+
+- id: sql-dynamic-execute
+  category: vuln
+  name: SQL Injection (dynamic EXECUTE)
+  description: Dynamic SQL string concatenated and run via EXECUTE/EXEC
+  severity: high
+  languages: [sql, psql]
+  keywords: ["EXECUTE", "EXEC(", "sp_executesql"]
+  regex: '(?i)(?:EXECUTE\s+IMMEDIATE|EXECUTE\s+|EXEC\s*\(|sp_executesql)'
+  context_required: ["||", "+", "quote", "concat", "@", "'"]
+  cwe: CWE-89
+  owasp: "A03:2021 Injection"
+  remediation: Use USING bind parameters (format %L / EXECUTE ... USING); never concatenate.
+  secure_code: |
+    EXECUTE 'SELECT * FROM t WHERE id = $1' USING v_id;
+  technical_impact: Arbitrary query execution inside the database.
+  business_impact: Mass data breach, integrity loss.
+
+# ============================ General config / headers ============================
+
+- id: cors-wildcard-origin
+  category: vuln
+  name: CORS Misconfiguration (wildcard origin)
+  description: Access-Control-Allow-Origin set to * (or reflected) with credentials
+  severity: medium
+  languages: []
+  keywords: ["Access-Control-Allow-Origin", "origin: true", "cors("]
+  regex: '(?i)Access-Control-Allow-Origin["'']?\s*[:=]\s*["'']?\*'
+  cwe: CWE-942
+  owasp: "A05:2021 Security Misconfiguration"
+  remediation: Reflect only vetted origins from an allowlist; never combine * with credentials.
+  secure_code: |
+    if (ALLOWED_ORIGINS.has(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
+  technical_impact: Cross-origin theft of authenticated responses.
+  business_impact: Data leakage to malicious sites.
+
+- id: insecure-cookie-flags
+  category: vuln
+  name: Insecure Cookie Configuration
+  description: Session cookie set without HttpOnly/Secure flags
+  severity: low
+  languages: [node, python]
+  keywords: ["httpOnly: false", "secure: false", "set_cookie", "res.cookie"]
+  regex: '(?:httpOnly\s*:\s*false|secure\s*:\s*false)'
+  cwe: CWE-1004
+  owasp: "A05:2021 Security Misconfiguration"
+  remediation: Set httpOnly, secure and sameSite on all session cookies.
+  secure_code: |
+    res.cookie("sid", v, { httpOnly: true, secure: true, sameSite: "strict" });
+  technical_impact: Cookie theft via XSS or plaintext interception.
+  business_impact: Session hijacking, account takeover.
+
+# ============ Extended rules mined from bughunting/bughunting2 skills ============
+- id: php-sqli-string-concat
+  category: vuln
+  name: PHP SQL Injection via String Concatenation
+  description: Raw SQL query built with request superglobals passed to mysqli/mysql/pgsql query sink.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - mysqli_query
+  - mysql_query
+  - pg_query
+  - ->query(
+  regex: (?:mysqli_query|mysql_query|pg_query|->query)\s*\(\s*["\x27]
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use parameterized queries with mysqli/PDO prepared statements and bound parameters.
+  secure_code: |
+    $stmt = $pdo->prepare('SELECT * FROM users WHERE name = ?');
+    $stmt->execute([$_GET['name']]);
+  technical_impact: Attacker reads or modifies arbitrary database rows and dumps schema/credentials.
+  business_impact: Full customer PII/credential breach across a multi-tenant database.
+
+- id: php-command-injection-shell
+  category: vuln
+  name: PHP OS Command Injection
+  description: User superglobal reaches a shell-executing function (system/exec/shell_exec/popen/proc_open).
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - system(
+  - exec(
+  - shell_exec(
+  - passthru(
+  - popen(
+  - proc_open(
+  regex: (?:\bsystem|\bexec|\bshell_exec|\bpassthru|\bpopen|\bproc_open)\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  - $_FILES
+  allowlist:
+    regex:
+    - escapeshellarg
+    - escapeshellcmd
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Avoid shells; use pcntl/proc_open with an argv array and escapeshellarg on every argument.
+  secure_code: |
+    $out = shell_exec('convert ' . escapeshellarg($_GET['file']) . ' out.png');
+  technical_impact: Arbitrary OS command execution as the web-server user.
+  business_impact: Full server compromise, source and secret exfiltration, lateral movement.
+
+- id: php-code-injection-eval
+  category: vuln
+  name: PHP Code Injection via eval/assert
+  description: Request superglobal flows into eval() or assert() executing attacker PHP.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - eval(
+  - assert(
+  regex: (?:\beval|\bassert)\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  cwe: CWE-95
+  owasp: A03:2021 Injection
+  remediation: Never eval user input; use a whitelist/dispatch map for dynamic behaviour.
+  secure_code: |
+    $allowed = ['sum' => fn($a,$b)=>$a+$b];
+    ($allowed[$_GET['op']] ?? fn()=>null)();
+  technical_impact: Arbitrary PHP execution in the application context.
+  business_impact: Complete application and data compromise.
+
+- id: php-deserialization-unserialize
+  category: vuln
+  name: PHP Object Injection via unserialize
+  description: unserialize() on request superglobal enables __wakeup/__destruct gadget chains.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - unserialize(
+  regex: \bunserialize\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  allowlist:
+    regex:
+    - allowed_classes
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Use json_decode for untrusted data, or pass allowed_classes=false to unserialize.
+  secure_code: |
+    $data = json_decode($_POST['data'], true);
+  technical_impact: Object-injection gadget chains leading to file write, SQLi, or RCE (phpggc).
+  business_impact: Server takeover via a serialized cookie or POST field.
+
+- id: php-lfi-dynamic-include
+  category: vuln
+  name: PHP Local/Remote File Inclusion
+  description: include/require path derived from a request superglobal enables LFI/RFI to RCE.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - include
+  - require
+  - include_once
+  - require_once
+  regex: (?:\binclude|\brequire)(?:_once)?\s*[\(\s]
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  cwe: CWE-98
+  owasp: A03:2021 Injection
+  remediation: Map the parameter to a fixed whitelist of allowed files; never concatenate user input into a path.
+  secure_code: |
+    $pages = ['home'=>'home.php','about'=>'about.php'];
+    include $pages[$_GET['p']] ?? 'home.php';
+  technical_impact: Arbitrary file read, php://filter-chain RCE, log/RFI code execution.
+  business_impact: Source and secret disclosure escalating to full RCE.
+
+- id: php-xxe-simplexml-load
+  category: vuln
+  name: PHP XXE via simplexml/DOMDocument
+  description: User XML parsed by simplexml_load_* / loadXML with entity expansion enabled.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - simplexml_load_string
+  - simplexml_load_file
+  - ->loadXML
+  regex: (?:simplexml_load_string|simplexml_load_file|->loadXML)\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - php://input
+  - file_get_contents
+  - LIBXML_NOENT
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Do not pass LIBXML_NOENT; on old PHP call libxml_disable_entity_loader(true) before parsing.
+  secure_code: |
+    libxml_disable_entity_loader(true);
+    $xml = simplexml_load_string($body);
+  technical_impact: Local file read (/etc/passwd, .env), SSRF to cloud metadata, blind OOB exfil.
+  business_impact: Disclosure of production secrets and internal network access.
+
+- id: php-ldap-injection
+  category: vuln
+  name: PHP LDAP Injection
+  description: Request superglobal concatenated into an ldap_search/list/bind filter.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - ldap_search
+  - ldap_list
+  - ldap_read
+  - ldap_bind
+  regex: (?:ldap_search|ldap_list|ldap_read|ldap_bind)\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  cwe: CWE-90
+  owasp: A03:2021 Injection
+  remediation: Escape filter values with ldap_escape($v, '', LDAP_ESCAPE_FILTER) before building the filter.
+  secure_code: |
+    $f = '(uid=' . ldap_escape($_POST['u'], '', LDAP_ESCAPE_FILTER) . ')';
+  technical_impact: Authentication bypass and blind attribute exfiltration from the directory.
+  business_impact: Admin account takeover and mass credential enumeration.
+
+- id: ruby-command-injection
+  category: vuln
+  name: Ruby OS Command Injection
+  description: Interpolated/param input reaches system/exec/spawn/IO.popen/Open3.
+  severity: critical
+  languages:
+  - ruby
+  keywords:
+  - system(
+  - exec(
+  - spawn(
+  - IO.popen
+  - Open3
+  regex: (?:\bsystem|\bexec|\bspawn|IO\.popen|Open3\.[A-Za-z_]+)\s*[\(\s]
+  context_required:
+  - '#{'
+  - params
+  - request
+  - +
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Pass the command as a separate-argument array so no shell is spawned.
+  secure_code: |
+    system('convert', params[:file], 'out.png')
+  technical_impact: Arbitrary OS command execution as the app process.
+  business_impact: Full host compromise and secret exfiltration.
+
+- id: ruby-command-injection-backticks
+  category: vuln
+  name: Ruby Command Injection via Backticks/%x
+  description: Interpolated input inside a backtick or %x() shell literal.
+  severity: critical
+  languages:
+  - ruby
+  keywords:
+  - '%x'
+  - '`'
+  regex: (?:%x[\(\[\{/!]|\x60)[^\x60\n]*#\{
+  context_required:
+  - '#{'
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Replace backtick/%x shells with an argv-array Open3.capture3 call.
+  secure_code: |
+    out, _ = Open3.capture2('ping', '-c', '1', host)
+  technical_impact: Arbitrary OS command execution via string interpolation.
+  business_impact: Server takeover from a single user-controlled field.
+
+- id: ruby-code-injection-eval
+  category: vuln
+  name: Ruby Code Injection via eval
+  description: Interpolated/param input reaches eval/instance_eval/class_eval/module_eval.
+  severity: critical
+  languages:
+  - ruby
+  keywords:
+  - eval(
+  - instance_eval
+  - class_eval
+  - module_eval
+  regex: (?:\beval|instance_eval|class_eval|module_eval)\s*[\(\s]
+  context_required:
+  - '#{'
+  - params
+  - request
+  cwe: CWE-94
+  owasp: A03:2021 Injection
+  remediation: Never eval user input; use a dispatch table or public_send with a whitelist.
+  secure_code: |
+    ACTIONS.fetch(params[:action]).call
+  technical_impact: Arbitrary Ruby execution in the application runtime.
+  business_impact: Complete application and data compromise.
+
+- id: ruby-sql-injection-activerecord
+  category: vuln
+  name: Ruby ActiveRecord Raw SQL Injection
+  description: Interpolated/param input in a raw .where/find_by_sql/execute/order fragment.
+  severity: critical
+  languages:
+  - ruby
+  keywords:
+  - .where(
+  - find_by_sql
+  - .execute(
+  - .order(
+  - .pluck(
+  regex: \.(?:where|find_by_sql|execute|order|group|having|select)\s*\(\s*["\x27]
+  context_required:
+  - '#{'
+  - params
+  - +
+  - request
+  allowlist:
+    regex:
+    - \?
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use bound placeholders (`?` or named) or the hash form of where.
+  secure_code: |
+    User.where('name = ?', params[:name])
+  technical_impact: Arbitrary SQL read/write against the application database.
+  business_impact: Full data breach and potential DB-host RCE.
+
+- id: ruby-deserialization-marshal
+  category: vuln
+  name: Ruby Insecure Deserialization via Marshal.load
+  description: Marshal.load/restore on untrusted bytes enables gadget-chain RCE.
+  severity: critical
+  languages:
+  - ruby
+  keywords:
+  - Marshal.load
+  - Marshal.restore
+  regex: Marshal\.(?:load|restore)\s*\(
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Never Marshal.load untrusted data; use JSON for external payloads.
+  secure_code: |
+    data = JSON.parse(request.body.read)
+  technical_impact: Remote code execution via Ruby object gadget chains.
+  business_impact: Server takeover from any attacker-supplied blob.
+
+- id: ruby-yaml-unsafe-load
+  category: vuln
+  name: Ruby Unsafe YAML Deserialization
+  description: YAML.load / Psych.unsafe_load instantiates arbitrary Ruby objects.
+  severity: high
+  languages:
+  - ruby
+  keywords:
+  - YAML.load
+  - Psych.load
+  - YAML.unsafe_load
+  regex: (?:YAML|Psych)\.(?:unsafe_load|load)\s*\(
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Use YAML.safe_load with an explicit permitted_classes allowlist.
+  secure_code: |
+    YAML.safe_load(input, permitted_classes: [Date])
+  technical_impact: Object-injection deserialization leading to RCE.
+  business_impact: Full application compromise via a crafted YAML document.
+
+- id: go-sql-injection-format
+  category: vuln
+  name: Go SQL Injection via Sprintf/Concatenation
+  description: Query/Exec argument built with fmt.Sprintf or + concatenation of request data.
+  severity: critical
+  languages:
+  - go
+  keywords:
+  - Query(
+  - QueryRow(
+  - Exec(
+  - Raw(
+  - Sprintf
+  regex: \.(?:Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext|Raw)\s*\(.*(?:fmt\.Sprintf|\+)
+  context_required:
+  - fmt.Sprintf
+  - +
+  - r.URL
+  - r.Form
+  - r.PostForm
+  - mux.Vars
+  - c.Param
+  - c.Query
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use placeholder parameters ($1/?) and pass args separately to Query/Exec.
+  secure_code: |
+    db.Query("SELECT * FROM users WHERE id = $1", r.URL.Query().Get("id"))
+  technical_impact: Arbitrary SQL read/write against the backend database.
+  business_impact: Data breach and possible database-host command execution.
+
+- id: go-command-injection
+  category: vuln
+  name: Go OS Command Injection
+  description: Request data flows into exec.Command arguments.
+  severity: critical
+  languages:
+  - go
+  keywords:
+  - exec.Command
+  - exec.CommandContext
+  regex: exec\.Command(?:Context)?\s*\(
+  context_required:
+  - r.URL
+  - r.Form
+  - r.PostForm
+  - r.Body
+  - mux.Vars
+  - c.Param
+  - c.Query
+  - +
+  - fmt.Sprintf
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Pass fixed argv elements and never invoke sh -c with concatenated input.
+  secure_code: |
+    exec.Command("ping", "-c", "1", host)
+  technical_impact: Arbitrary OS command execution as the service account.
+  business_impact: Host compromise and lateral movement.
+
+- id: java-command-injection-runtime
+  category: vuln
+  name: Java Command Injection via Runtime.exec
+  description: Concatenated/request input reaches Runtime.getRuntime().exec.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - getRuntime().exec
+  - .exec(
+  regex: Runtime\.getRuntime\(\)\.exec\s*\(
+  context_required:
+  - getParameter
+  - getHeader
+  - request
+  - +
+  - getQueryString
+  - '@RequestParam'
+  - '@PathVariable'
+  - getInputStream
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Use ProcessBuilder with a fixed argument list and validate/allowlist inputs.
+  secure_code: |
+    new ProcessBuilder("ping", "-c", "1", host).start();
+  technical_impact: Arbitrary OS command execution in the servlet container.
+  business_impact: Full server compromise and credential theft.
+
+- id: java-command-injection-processbuilder
+  category: vuln
+  name: Java Command Injection via ProcessBuilder
+  description: Request/concatenated input passed to a new ProcessBuilder invocation.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - new ProcessBuilder
+  - ProcessBuilder(
+  regex: new\s+ProcessBuilder\s*\(
+  context_required:
+  - getParameter
+  - getHeader
+  - request
+  - +
+  - '@RequestParam'
+  - '@PathVariable'
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Keep each argv element fixed; never build a "sh -c" string from user input.
+  secure_code: |
+    new ProcessBuilder("convert", safeName, "out.png").start();
+  technical_impact: Arbitrary OS command execution.
+  business_impact: Host takeover from a single request parameter.
+
+- id: java-sql-injection-statement
+  category: vuln
+  name: Java SQL Injection via Statement Concatenation
+  description: execute/executeQuery/executeUpdate argument built with + string concatenation.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - executeQuery
+  - executeUpdate
+  - execute(
+  - addBatch
+  regex: \.(?:executeQuery|executeUpdate|execute|addBatch)\s*\(.*\+
+  context_required:
+  - getParameter
+  - getHeader
+  - request
+  - '@RequestParam'
+  - '@PathVariable'
+  - +
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use PreparedStatement with ? placeholders and setString/setInt binding.
+  secure_code: |
+    PreparedStatement ps = c.prepareStatement("SELECT * FROM u WHERE id=?");
+    ps.setString(1, request.getParameter("id"));
+  technical_impact: Arbitrary SQL read/write and potential DB-host RCE.
+  business_impact: Enterprise data breach across the backing database.
+
+- id: java-deserialization-objectinputstream
+  category: vuln
+  name: Java Insecure Deserialization via ObjectInputStream
+  description: readObject on an attacker-controlled stream enables ysoserial gadget-chain RCE.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - ObjectInputStream
+  - readObject
+  - readUnshared
+  regex: (?:new\s+ObjectInputStream\s*\(|\.readObject\s*\(\s*\))
+  allowlist:
+    regex:
+    - ValidatingObjectInputStream
+    - setObjectInputFilter
+    - ObjectInputFilter
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Avoid native serialization for untrusted data; enforce an ObjectInputFilter allowlist.
+  secure_code: |
+    ois.setObjectInputFilter(ObjectInputFilter.Config.createFilter("com.app.*;!*"));
+  technical_impact: Remote code execution via CommonsCollections/Spring gadget chains.
+  business_impact: Full server compromise from a serialized cookie or body.
+
+- id: java-spel-injection
+  category: vuln
+  name: Java Spring SpEL Injection
+  description: Request input reaches SpelExpressionParser.parseExpression enabling T(Runtime).exec RCE.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - parseExpression
+  - SpelExpressionParser
+  regex: \.parseExpression\s*\(
+  context_required:
+  - getParameter
+  - request
+  - '@RequestParam'
+  - '@PathVariable'
+  - +
+  - getHeader
+  cwe: CWE-917
+  owasp: A03:2021 Injection
+  remediation: Never evaluate user input as SpEL; if unavoidable use SimpleEvaluationContext (no type refs).
+  secure_code: |
+    Expression e = parser.parseExpression(fixedTemplate);
+    e.getValue(new StandardEvaluationContext(safeRoot));
+  technical_impact: Arbitrary Java/OS execution via T(java.lang.Runtime).getRuntime().exec.
+  business_impact: Unauthenticated RCE on Spring applications.
+
+- id: java-snakeyaml-unsafe-load
+  category: vuln
+  name: Java SnakeYAML Unsafe Deserialization
+  description: new Yaml().load without SafeConstructor instantiates arbitrary Java types.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - new Yaml(
+  - yaml.load
+  - .load(
+  regex: (?:new\s+Yaml\s*\([^\)]*\)|yaml)\.load\s*\(
+  allowlist:
+    regex:
+    - SafeConstructor
+    - new Yaml\(new Constructor
+    - LoaderOptions
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Construct Yaml with a SafeConstructor so only plain types are allowed.
+  secure_code: |
+    Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
+  technical_impact: RCE via ScriptEngineManager/JdbcRowSetImpl YAML gadgets.
+  business_impact: Server takeover from any YAML-accepting endpoint.
+
+- id: csharp-sql-injection
+  category: vuln
+  name: .NET SQL Injection via Concatenation/Interpolation
+  description: SqlCommand/FromSqlRaw text built with + or interpolated request input.
+  severity: critical
+  languages:
+  - csharp
+  keywords:
+  - new SqlCommand
+  - FromSqlRaw
+  - ExecuteSqlRaw
+  - CommandText
+  regex: (?:new\s+(?:Sql|MySql|Npgsql|OleDb|SQLite)Command|FromSqlRaw|ExecuteSqlRaw|CommandText\s*=)\s*.*(?:\+|\$")
+  context_required:
+  - Request
+  - .Query
+  - .Form
+  - '[FromQuery]'
+  - '[FromBody]'
+  - '[FromRoute]'
+  - +
+  allowlist:
+    regex:
+    - Parameters\.Add
+    - AddWithValue
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use parameterized SqlCommand.Parameters or FromSqlInterpolated with EF Core.
+  secure_code: |
+    var cmd = new SqlCommand("SELECT * FROM U WHERE Id=@id", con);
+    cmd.Parameters.AddWithValue("@id", Request.Query["id"]);
+  technical_impact: Arbitrary SQL read/write against the database.
+  business_impact: Breach of all stored records and potential xp_cmdshell RCE.
+
+- id: csharp-command-injection
+  category: vuln
+  name: .NET OS Command Injection
+  description: Request input flows into Process.Start / ProcessStartInfo arguments.
+  severity: critical
+  languages:
+  - csharp
+  keywords:
+  - Process.Start
+  - new ProcessStartInfo
+  - ProcessStartInfo
+  regex: (?:Process\.Start|new\s+ProcessStartInfo)\s*\(
+  context_required:
+  - Request
+  - .Query
+  - .Form
+  - '[FromQuery]'
+  - '[FromBody]'
+  - '[FromRoute]'
+  - +
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Set ArgumentList entries individually with UseShellExecute=false; never build a cmd string.
+  secure_code: |
+    var psi = new ProcessStartInfo("ping"){ UseShellExecute=false };
+    psi.ArgumentList.Add(host);
+  technical_impact: Arbitrary OS command execution as the app-pool identity.
+  business_impact: Windows host compromise and domain foothold.
+
+- id: csharp-deserialization-binaryformatter
+  category: vuln
+  name: .NET Insecure Deserialization (BinaryFormatter family)
+  description: Use of BinaryFormatter/SoapFormatter/LosFormatter/ObjectStateFormatter deserializes untrusted types.
+  severity: critical
+  languages:
+  - csharp
+  keywords:
+  - BinaryFormatter
+  - SoapFormatter
+  - LosFormatter
+  - ObjectStateFormatter
+  - NetDataContractSerializer
+  regex: \b(?:BinaryFormatter|SoapFormatter|LosFormatter|ObjectStateFormatter|NetDataContractSerializer)\b
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Replace with System.Text.Json / DataContractJsonSerializer over a fixed type set.
+  secure_code: |
+    var obj = JsonSerializer.Deserialize<Dto>(json);
+  technical_impact: RCE via ysoserial.net TypeConfuseDelegate gadget chains.
+  business_impact: Full IIS server compromise from a serialized field or ViewState.
+
+- id: csharp-deserialization-typenamehandling
+  category: vuln
+  name: Json.NET TypeNameHandling Deserialization
+  description: TypeNameHandling.All/Auto/Objects lets attacker JSON pick the deserialized .NET type.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - TypeNameHandling
+  regex: TypeNameHandling\s*=\s*TypeNameHandling\.(?:All|Auto|Objects|Arrays)
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Use TypeNameHandling.None, or a strict SerializationBinder allowlist.
+  secure_code: |
+    new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.None };
+  technical_impact: RCE via $type gadget selection during deserialization.
+  business_impact: Server takeover from an attacker-supplied JSON body.
+
+- id: csharp-xxe-dtdprocessing
+  category: vuln
+  name: .NET XXE via DtdProcessing.Parse
+  description: XmlReaderSettings re-enables DTD processing, allowing external entity expansion.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - DtdProcessing
+  regex: DtdProcessing\s*=\s*DtdProcessing\.Parse
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set DtdProcessing=Prohibit and XmlResolver=null on the reader settings.
+  secure_code: |
+    var s = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+  technical_impact: Local file read and SSRF via external XML entities.
+  business_impact: Disclosure of config secrets and internal network reach.
+
+- id: py-sqlalchemy-text-injection
+  category: vuln
+  name: Python SQLAlchemy Raw text() Injection
+  description: f-string / concatenated / %-formatted user input inside a SQLAlchemy text() or execute().
+  severity: critical
+  languages:
+  - python
+  keywords:
+  - text(
+  - .execute(
+  regex: (?:\btext\s*\(\s*f["\x27]|\.execute\s*\(\s*f["\x27]|\btext\s*\([^)]*(?:\+|\.format\(|%[sd]))
+  context_required:
+  - f"
+  - f'
+  - +
+  - .format(
+  - '%'
+  - request
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use bound parameters with text(...).bindparams or pass params dict to execute.
+  secure_code: |
+    conn.execute(text("SELECT * FROM u WHERE id = :id"), {"id": request.args["id"]})
+  technical_impact: Arbitrary SQL execution against the mapped database.
+  business_impact: Data breach and potential Postgres COPY FROM PROGRAM RCE.
+
+- id: py-xxe-lxml-resolve-entities
+  category: vuln
+  name: Python lxml XXE (resolve_entities/no_network)
+  description: lxml parser explicitly re-enables entity resolution or network fetches.
+  severity: high
+  languages:
+  - python
+  keywords:
+  - etree
+  - XMLParser
+  - resolve_entities
+  - no_network
+  regex: (?:etree\.(?:parse|fromstring|XML)|XMLParser)\s*\([^)]*(?:resolve_entities\s*=\s*True|no_network\s*=\s*False)
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Parse with defusedxml, or keep resolve_entities=False and no_network=True.
+  secure_code: |
+    from defusedxml.lxml import fromstring
+    root = fromstring(user_xml)
+  technical_impact: External-entity file read and blind OOB exfiltration.
+  business_impact: Leakage of secrets and internal service access.
+
+- id: py-tarfile-extractall-zipslip
+  category: vuln
+  name: Python Arbitrary File Write via extractall (Zip Slip)
+  description: tarfile/zipfile extractall/extract of an untrusted archive without member filtering.
+  severity: high
+  languages:
+  - python
+  keywords:
+  - extractall
+  - tarfile
+  - .extract(
+  regex: \.extract(?:all)?\s*\(
+  context_required:
+  - tar
+  - zip
+  - ZipFile
+  - tarfile
+  - upload
+  - request
+  allowlist:
+    regex:
+    - filter\s*=
+  cwe: CWE-22
+  owasp: A01:2021 Broken Access Control
+  remediation: Pass filter='data' (Py3.12+) or validate each member path stays within the target dir.
+  secure_code: |
+    tar.extractall(path=dest, filter='data')
+  technical_impact: Path-traversal file write (cron/webshell) outside the extraction directory.
+  business_impact: Remote code execution from a malicious uploaded archive.
+
+- id: node-code-injection-vm
+  category: vuln
+  name: Node.js Code Injection via vm Module
+  description: Request-derived string executed by vm.runInContext/compileFunction/new vm.Script.
+  severity: critical
+  languages:
+  - node
+  keywords:
+  - vm.runInContext
+  - vm.runInNewContext
+  - vm.runInThisContext
+  - vm.compileFunction
+  - new vm.Script
+  regex: vm\.(?:runInContext|runInNewContext|runInThisContext|compileFunction)\s*\(|new\s+vm\.Script\s*\(
+  context_required:
+  - req.
+  - request.
+  - params
+  - req.body
+  - req.query
+  - req.params
+  - '`'
+  - +
+  - ${
+  cwe: CWE-94
+  owasp: A03:2021 Injection
+  remediation: Never execute user input; the vm module is not a security sandbox. Use a safe expression parser.
+  secure_code: |
+    const result = allowedOps[req.body.op]?.(a, b);
+  technical_impact: Arbitrary JavaScript execution in the Node process (escapes vm easily).
+  business_impact: Server-side RCE reaching env vars, cloud metadata, and internal services.
+
+- id: node-deserialization-node-serialize
+  category: vuln
+  name: Node.js Insecure Deserialization (node-serialize)
+  description: unserialize() on request data triggers IIFE code execution in node-serialize.
+  severity: critical
+  languages:
+  - node
+  keywords:
+  - unserialize(
+  - node-serialize
+  - serialize.unserialize
+  regex: (?:serialize\.)?unserialize\s*\(
+  context_required:
+  - req.
+  - request.
+  - req.body
+  - req.query
+  - req.cookies
+  - params
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Use JSON.parse for untrusted input; never deserialize with node-serialize.
+  secure_code: |
+    const obj = JSON.parse(req.body.data);
+  technical_impact: Remote code execution via the _$$ND_FUNC$$_ immediately-invoked-function gadget.
+  business_impact: Full server compromise from a crafted cookie or JSON field.
+
+- id: web-xss-php-echo-superglobal
+  category: vuln
+  name: Reflected XSS via PHP echo of request superglobal
+  description: User-controlled superglobal echoed into HTML output without encoding.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - echo
+  - print
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  regex: (?:echo|print)\b[^;]*\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\b
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  allowlist:
+    regex:
+    - htmlspecialchars
+    - htmlentities
+    - strip_tags
+    - filter_var
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Encode output with htmlspecialchars(ENT_QUOTES) before echoing user input.
+  secure_code: |
+    echo htmlspecialchars($_GET['q'], ENT_QUOTES, 'UTF-8');
+  technical_impact: Attacker executes arbitrary JavaScript in the victim's session on the target origin.
+  business_impact: Session theft, account takeover, and defacement erode user trust and invite fraud.
+
+- id: web-xss-node-response-taint
+  category: vuln
+  name: Reflected XSS via Express response of request input
+  description: Request query/body/param concatenated into an HTML response body unescaped.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - res.send
+  - res.write
+  - res.end
+  - req.query
+  - req.body
+  regex: res\.(?:send|write|end)\s*\([^)]*(?:req\.(?:query|params|body|headers)|request\.(?:query|params|body))
+  context_required:
+  - req.query
+  - req.params
+  - req.body
+  - request.
+  allowlist:
+    regex:
+    - escapeHtml
+    - sanitize
+    - DOMPurify
+    - encodeURIComponent
+    - xss\(
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Escape user input or render through an auto-escaping template engine.
+  secure_code: |
+    res.send(`<h1>${escapeHtml(req.query.q)}</h1>`);
+  technical_impact: Arbitrary script execution in the victim browser against the application origin.
+  business_impact: Credential and token theft leading to account takeover and reputational damage.
+
+- id: web-xss-java-servlet-writer
+  category: vuln
+  name: Reflected XSS via servlet writer of request parameter
+  description: request.getParameter/getHeader written directly to the servlet response stream.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - getWriter
+  - println
+  - getParameter
+  - getHeader
+  regex: (?:getWriter\(\)|out|response)\.(?:print|println|write|append)\s*\([^)]*request\.(?:getParameter|getHeader|getQueryString)
+  context_required:
+  - getParameter
+  - getHeader
+  - getQueryString
+  allowlist:
+    regex:
+    - Encode\.
+    - ESAPI
+    - StringEscapeUtils
+    - HtmlUtils
+    - OWASP
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: HTML-encode with OWASP Encoder (Encode.forHtml) before writing to the response.
+  secure_code: |
+    out.println(Encode.forHtml(request.getParameter("q")));
+  technical_impact: JavaScript runs in the victim's authenticated session on the target host.
+  business_impact: Account takeover and data exfiltration expose the business to fraud and compliance breach.
+
+- id: web-xss-flask-render-template-string
+  category: vuln
+  name: Server-side template injection / XSS via render_template_string
+  description: User input flows into render_template_string, enabling SSTI and reflected XSS.
+  severity: critical
+  languages:
+  - python
+  keywords:
+  - render_template_string
+  - request.
+  regex: render_template_string\s*\([^)]*(?:request\.|\bf["']|\+|%|\.format)
+  context_required:
+  - request.
+  - format
+  - +
+  allowlist:
+    regex:
+    - escape\(
+    - Markup.escape
+    - autoescape
+  cwe: CWE-1336
+  owasp: A03:2021 Injection
+  remediation: Render static template files with context variables; never build template source from user input.
+  secure_code: |
+    return render_template('page.html', q=request.args.get('q'))
+  technical_impact: Jinja SSTI yields remote code execution or, at minimum, arbitrary DOM script execution.
+  business_impact: Full server compromise or mass user compromise, catastrophic to operations and trust.
+
+- id: web-xss-ejs-unescaped-output
+  category: vuln
+  name: XSS via EJS unescaped output tag
+  description: EJS <%- %> renders a variable raw, bypassing HTML escaping.
+  severity: high
+  languages:
+  - node
+  - html
+  keywords:
+  - <%-
+  regex: <%-\s*(?!include)[A-Za-z_$]
+  context_required:
+  - <%-
+  allowlist:
+    regex:
+    - include\(
+    - escape
+    - sanitize
+    - DOMPurify
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use the escaping output tag <%= %> for user-controlled values.
+  secure_code: |
+    <%= user.bio %>
+  technical_impact: Stored or reflected script execution wherever the template renders untrusted data.
+  business_impact: One payload infects every viewer of the page, multiplying takeover and fraud impact.
+
+- id: web-xss-handlebars-triple-stache
+  category: vuln
+  name: XSS via Handlebars triple-stache raw output
+  description: Handlebars triple-brace emits unescaped HTML, enabling injection.
+  severity: high
+  languages:
+  - node
+  - html
+  keywords:
+  - '{{{'
+  regex: \{\{\{\s*[^}\s][^}]*\}\}\}
+  context_required:
+  - '{{{'
+  allowlist:
+    regex:
+    - SafeString
+    - escapeExpression
+    - DOMPurify
+    - sanitize
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use double-stache which HTML-escapes, or sanitize before marking SafeString.
+  secure_code: |
+    <div>{{ user.bio }}</div>
+  technical_impact: Attacker HTML/JS executes in every browser rendering the template.
+  business_impact: Cross-user session theft and defacement at scale damage revenue and trust.
+
+- id: web-xss-pug-unescaped-interpolation
+  category: vuln
+  name: XSS via Pug unescaped interpolation
+  description: Pug !{ } interpolation or != buffered code outputs raw HTML.
+  severity: high
+  languages:
+  - html
+  - node
+  keywords:
+  - '!{'
+  - '!='
+  regex: '!\{[^}]*\}|(?:^|\s)(?:[a-zA-Z][\w.]*)?!=\s*[A-Za-z_$]'
+  context_required:
+  - '!{'
+  - '!='
+  allowlist:
+    regex:
+    - escape
+    - sanitize
+    - DOMPurify
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use escaped interpolation
+  secure_code: |
+    p= user.bio
+  technical_impact: Untrusted values render as live markup and scripts in the victim browser.
+  business_impact: Enables account takeover and phishing overlays on trusted pages.
+
+- id: web-xss-jinja-safe-filter
+  category: vuln
+  name: XSS via Jinja safe filter on user data
+  description: The safe filter disables autoescaping, rendering user input as raw HTML.
+  severity: high
+  languages:
+  - python
+  - html
+  keywords:
+  - safe
+  - '{{'
+  regex: \{\{[^}]*\|\s*safe\b[^}]*\}\}
+  context_required:
+  - safe
+  - '{{'
+  allowlist:
+    regex:
+    - escape
+    - forceescape
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Remove the safe filter on untrusted values; sanitize server-side if raw HTML is required.
+  secure_code: |
+    <div>{{ user.bio }}</div>
+  technical_impact: Arbitrary script execution wherever the marked-safe value is rendered.
+  business_impact: Stored XSS across all viewers drives mass account compromise.
+
+- id: web-xss-thymeleaf-utext
+  category: vuln
+  name: XSS via Thymeleaf th:utext unescaped output
+  description: Thymeleaf th:utext renders the expression as unescaped HTML.
+  severity: high
+  languages:
+  - java
+  - html
+  keywords:
+  - th:utext
+  regex: th:utext\s*=\s*["']
+  context_required:
+  - th:utext
+  allowlist:
+    regex:
+    - '#strings.escapeXml'
+    - th:text
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use th:text (escaped) instead of th:utext for untrusted content.
+  secure_code: |
+    <span th:text="${user.bio}"></span>
+  technical_impact: User-controlled markup executes as script in the rendered page.
+  business_impact: Session hijacking and privileged-viewer compromise escalate to admin takeover.
+
+- id: web-xss-razor-html-raw
+  category: vuln
+  name: XSS via ASP.NET Razor Html.Raw
+  description: Html.Raw emits its argument without HTML encoding, allowing injection.
+  severity: high
+  languages:
+  - csharp
+  - html
+  keywords:
+  - Html.Raw
+  regex: '@?Html\.Raw\s*\('
+  context_required:
+  - Html.Raw
+  allowlist:
+    regex:
+    - HtmlEncoder
+    - AntiXss
+    - Encode\(
+    - HtmlEncode
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Render values with @Model.X (auto-encoded); avoid Html.Raw on user input.
+  secure_code: |
+    <div>@Model.Bio</div>
+  technical_impact: Attacker script runs in the victim's authenticated ASP.NET session.
+  business_impact: Account takeover and data theft trigger fraud and regulatory exposure.
+
+- id: web-xss-blade-unescaped-echo
+  category: vuln
+  name: XSS via Laravel Blade unescaped echo
+  description: Blade {!! !!} outputs raw HTML, bypassing Blade's default escaping.
+  severity: high
+  languages:
+  - php
+  - html
+  keywords:
+  - '{!!'
+  regex: \{!!\s*[^}]*!!\}
+  context_required:
+  - '{!!'
+  allowlist:
+    regex:
+    - \be\(
+    - clean\(
+    - Purifier
+    - strip_tags
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use {{ }} escaped echo; sanitize with a purifier when raw HTML is required.
+  secure_code: |
+    <div>{{ $user->bio }}</div>
+  technical_impact: Untrusted markup executes as script for every viewer of the page.
+  business_impact: Stored XSS across users leads to mass takeover and brand damage.
+
+- id: web-xss-rails-html-safe-taint
+  category: vuln
+  name: XSS via Rails html_safe on interpolated user input
+  description: Marking a string built from params or interpolation as html_safe bypasses ERB escaping.
+  severity: high
+  languages:
+  - ruby
+  - html
+  keywords:
+  - html_safe
+  - params
+  - '#{'
+  regex: \.html_safe\b
+  context_required:
+  - params
+  - '#{'
+  allowlist:
+    regex:
+    - sanitize\(
+    - strip_tags
+    - escape
+    - \bh\(
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Never call html_safe on user data; use sanitize() with an allowlist or escape it.
+  secure_code: |
+    <%= sanitize(user.bio, tags: %w(b i)) %>
+  technical_impact: Injected markup executes in every browser rendering the view.
+  business_impact: Cross-privilege stored XSS can promote attackers to admin and leak secrets.
+
+- id: web-xss-dom-document-write-source
+  category: vuln
+  name: DOM XSS via document.write of URL-controlled source
+  description: document.write sinks location/referrer/window.name into the DOM without sanitization.
+  severity: high
+  languages:
+  - node
+  - react
+  - html
+  keywords:
+  - document.write
+  - location.hash
+  - location.search
+  - document.referrer
+  regex: document\.write(?:ln)?\s*\([^)]*(?:location\.(?:hash|search|href)|document\.referrer|window\.name|URLSearchParams)
+  context_required:
+  - location.hash
+  - location.search
+  - location.href
+  - document.referrer
+  - window.name
+  allowlist:
+    regex:
+    - DOMPurify
+    - textContent
+    - encodeURIComponent
+    - sanitize
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Build DOM with textContent/createElement; never document.write untrusted URL data.
+  secure_code: |
+    el.textContent = new URLSearchParams(location.search).get('q');
+  technical_impact: Client-side script execution invisible to server WAFs and input filters.
+  business_impact: Fragment-based token theft on OAuth callbacks yields cross-platform account takeover.
+
+- id: web-xss-dom-insertadjacenthtml-source
+  category: vuln
+  name: DOM XSS via insertAdjacentHTML of URL-controlled source
+  description: insertAdjacentHTML renders location/referrer/input values as markup.
+  severity: high
+  languages:
+  - node
+  - react
+  - html
+  keywords:
+  - insertAdjacentHTML
+  - location.hash
+  - location.search
+  regex: insertAdjacentHTML\s*\([^)]*(?:location\.(?:hash|search|href)|document\.referrer|window\.name|URLSearchParams|\.value)
+  context_required:
+  - location.hash
+  - location.search
+  - document.referrer
+  - window.name
+  - .value
+  allowlist:
+    regex:
+    - DOMPurify
+    - sanitize
+    - textContent
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Sanitize with DOMPurify or use textContent; avoid HTML-parsing sinks on user input.
+  secure_code: |
+    el.insertAdjacentHTML('beforeend', DOMPurify.sanitize(userHtml));
+  technical_impact: Arbitrary DOM script execution in the victim's browser session.
+  business_impact: Session and token theft enabling account takeover at client scale.
+
+- id: web-xss-dom-jquery-html-source
+  category: vuln
+  name: DOM XSS via jQuery .html() of URL-controlled source
+  description: jQuery .html() sinks location/referrer/URLSearchParams into the DOM as markup.
+  severity: high
+  languages:
+  - node
+  - html
+  keywords:
+  - .html(
+  - location.hash
+  - location.search
+  regex: \.html\s*\([^)]*(?:location\.(?:hash|search|href)|document\.referrer|window\.name|URLSearchParams|decodeURIComponent)
+  context_required:
+  - location.hash
+  - location.search
+  - document.referrer
+  - URLSearchParams
+  allowlist:
+    regex:
+    - DOMPurify
+    - \.text\(
+    - sanitize
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use .text() or DOMPurify.sanitize; jQuery < 3.5 also mutates markup (CVE-2020-11022).
+  secure_code: |
+    $('#out').text(new URLSearchParams(location.search).get('q'));
+  technical_impact: Client script execution against the trusted origin, bypassing server defenses.
+  business_impact: Widespread session hijacking and phishing overlays harm users and brand.
+
+- id: web-xss-vue-v-html-binding
+  category: vuln
+  name: XSS via Vue v-html binding
+  description: v-html renders bound data as raw HTML, executing embedded scripts/handlers.
+  severity: high
+  languages:
+  - node
+  - html
+  keywords:
+  - v-html
+  regex: v-html\s*=\s*["'][^"']+["']
+  context_required:
+  - v-html
+  allowlist:
+    regex:
+    - DOMPurify
+    - sanitize
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Use text interpolation {{ }}; sanitize with DOMPurify if raw HTML is unavoidable.
+  secure_code: |
+    <div v-html="sanitizedBio"></div>
+  technical_impact: Untrusted markup executes in the Vue application context.
+  business_impact: Stored XSS across all viewers enables mass account compromise.
+
+- id: web-xss-angular-bypass-security-trust
+  category: vuln
+  name: XSS via Angular bypassSecurityTrust sanitizer bypass
+  description: bypassSecurityTrustHtml/Url/Script disables Angular's built-in sanitization.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - bypassSecurityTrust
+  regex: bypassSecurityTrust(?:Html|Script|Style|Url|ResourceUrl)\s*\(
+  context_required:
+  - bypassSecurityTrust
+  allowlist:
+    regex:
+    - DOMPurify
+    - sanitize\(
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Let Angular sanitize by default; only bypass on values you fully control and pre-sanitize.
+  secure_code: |
+    this.safe = this.sanitizer.sanitize(SecurityContext.HTML, userHtml);
+  technical_impact: Attacker markup executes as trusted content in the Angular app.
+  business_impact: Client-side takeover and data theft across the user base.
+
+- id: web-xss-href-javascript-uri
+  category: vuln
+  name: XSS via javascript URI in href/src attribute
+  description: 'A javascript: scheme in href/src/action executes script on user interaction.'
+  severity: medium
+  languages:
+  - html
+  - react
+  - php
+  keywords:
+  - 'javascript:'
+  regex: '(?:href|src|xlink:href|action|formaction)\s*=\s*["'']?\s*javascript:'
+  context_required:
+  - 'javascript:'
+  allowlist:
+    regex:
+    - void\(0\)
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: 'Allowlist http/https/mailto schemes; reject javascript:/data: in URL attributes.'
+  secure_code: |
+    const safe = /^https?:/.test(url) ? url : '#';
+  technical_impact: Single-click JavaScript execution in the victim's session on the target origin.
+  business_impact: Phishing and session theft via trusted-looking in-app links.
+
+- id: web-postmessage-wildcard-target-origin
+  category: vuln
+  name: Sensitive data leak via postMessage wildcard target origin
+  description: postMessage sends data with targetOrigin star, readable by any framing page.
+  severity: medium
+  languages:
+  - node
+  - react
+  - html
+  keywords:
+  - postMessage
+  - '''*'''
+  regex: \.postMessage\s*\([^,]+,\s*["']\*["']\s*\)
+  context_required:
+  - postMessage
+  allowlist:
+    regex:
+    - location.origin
+    - targetOrigin
+    - https://
+  cwe: CWE-345
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Set an explicit target origin instead of star when the message carries sensitive data.
+  secure_code: |
+    frame.postMessage(data, 'https://app.example.com');
+  technical_impact: Any page that frames the sender captures tokens or session data cross-origin.
+  business_impact: Cross-origin token theft leads to account takeover without any XSS.
+
+- id: web-open-redirect-php-header-location
+  category: vuln
+  name: Open redirect via PHP Location header from user input
+  description: A request value is placed in a Location header, redirecting to an attacker URL.
+  severity: medium
+  languages:
+  - php
+  keywords:
+  - header
+  - 'Location:'
+  - $_GET
+  regex: header\s*\(\s*["']Location:[^)]*\$_(?:GET|POST|REQUEST|SERVER)
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  allowlist:
+    regex:
+    - filter_var
+    - preg_match
+    - in_array
+    - parse_url
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Validate the target against an allowlist or force a relative path before redirecting.
+  secure_code: |
+    $t = in_array($_GET['next'], $allowed) ? $_GET['next'] : '/';
+  technical_impact: Attacker redirects victims to arbitrary external sites from the trusted domain.
+  business_impact: Phishing and OAuth code theft chain to account takeover and brand abuse.
+
+- id: web-open-redirect-flask-redirect
+  category: vuln
+  name: Open redirect via Flask redirect of request input
+  description: redirect() is called directly on request.args/form/values without validation.
+  severity: medium
+  languages:
+  - python
+  keywords:
+  - redirect
+  - request.args
+  - request.values
+  regex: redirect\s*\(\s*request\.(?:args|values|form|GET|headers)
+  context_required:
+  - request.args
+  - request.values
+  - request.form
+  allowlist:
+    regex:
+    - url_for
+    - is_safe_url
+    - urlparse
+    - netloc
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Reject targets with a non-empty netloc; only allow same-site relative paths.
+  secure_code: |
+    nxt = request.args.get('next', '/')
+    if urlparse(nxt).netloc: nxt = '/'
+  technical_impact: Attacker sends victims to external sites while the link shows the trusted host.
+  business_impact: Enables phishing and OAuth token theft escalating to account takeover.
+
+- id: web-open-redirect-java-sendredirect
+  category: vuln
+  name: Open redirect via Java sendRedirect of request parameter
+  description: sendRedirect uses request.getParameter/getHeader without allowlist validation.
+  severity: medium
+  languages:
+  - java
+  keywords:
+  - sendRedirect
+  - getParameter
+  regex: sendRedirect\s*\([^)]*request\.(?:getParameter|getHeader|getQueryString)
+  context_required:
+  - getParameter
+  - getHeader
+  allowlist:
+    regex:
+    - startsWith
+    - allowlist
+    - URI
+    - isLocal
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Validate the target is a known relative path or allowlisted host before redirecting.
+  secure_code: |
+    if (!target.startsWith("/")) target = "/";
+    response.sendRedirect(target);
+  technical_impact: Attacker-controlled redirect from the trusted origin to any external site.
+  business_impact: Phishing and auth-code interception drive account takeover and fraud.
+
+- id: web-open-redirect-client-location-assign
+  category: vuln
+  name: Client-side open redirect via location assignment from URL input
+  description: window.location is set from location.hash/search or URL params without validation.
+  severity: medium
+  languages:
+  - node
+  - react
+  - html
+  keywords:
+  - location.href
+  - location.assign
+  - location.search
+  - URLSearchParams
+  regex: (?:window\.)?location(?:\.href)?\s*=\s*[^;]*(?:location\.(?:hash|search)|URLSearchParams|params\.get|req\.query)|location\.assign\s*\([^)]*(?:location\.(?:hash|search)|URLSearchParams|params)
+  context_required:
+  - location.hash
+  - location.search
+  - URLSearchParams
+  - params.get
+  - req.query
+  allowlist:
+    regex:
+    - startsWith\('/'\)
+    - new URL
+    - allowlist
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Only assign same-origin relative paths; reject values with a scheme or host.
+  secure_code: |
+    if (dest.startsWith('/')) location.href = dest;
+  technical_impact: Attacker redirects the victim's browser to arbitrary sites client-side.
+  business_impact: Phishing and OAuth theft chains to account takeover.
+
+- id: web-cors-reflected-origin-node
+  category: vuln
+  name: CORS reflected Origin with credentials in Node
+  description: Access-Control-Allow-Origin is set from the request Origin header, enabling credentialed cross-origin reads.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - Access-Control-Allow-Origin
+  - headers.origin
+  - req.get
+  regex: Access-Control-Allow-Origin["'\s,]+[^;\n]*(?:req\.headers\.origin|request\.headers\.origin|req\.get\(["'][Oo]rigin)
+  context_required:
+  - req.headers.origin
+  - request.headers.origin
+  - req.get
+  allowlist:
+    regex:
+    - allowlist
+    - includes\(
+    - whitelist
+    - === ?['"]https
+  cwe: CWE-942
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Reflect only origins from a strict allowlist; never echo an arbitrary Origin with credentials.
+  secure_code: |
+    if (allowed.includes(origin)) res.header('Access-Control-Allow-Origin', origin);
+  technical_impact: Any attacker origin reads authenticated API responses (PII, tokens, CSRF tokens).
+  business_impact: Cross-origin data theft leading to account takeover and privacy breach.
+
+- id: web-cors-reflected-origin-php
+  category: vuln
+  name: CORS reflected Origin from HTTP_ORIGIN in PHP
+  description: Access-Control-Allow-Origin is built from $_SERVER['HTTP_ORIGIN'] unfiltered.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - Access-Control-Allow-Origin
+  - HTTP_ORIGIN
+  regex: Access-Control-Allow-Origin[^\n]*\$_SERVER\[["']HTTP_ORIGIN
+  context_required:
+  - HTTP_ORIGIN
+  allowlist:
+    regex:
+    - in_array
+    - preg_match
+    - whitelist
+    - allowlist
+  cwe: CWE-942
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Validate the Origin against an allowlist before reflecting it in the CORS header.
+  secure_code: |
+    if (in_array($origin, $allowed)) header("Access-Control-Allow-Origin: $origin");
+  technical_impact: Attacker sites perform credentialed reads of authenticated responses.
+  business_impact: Sensitive data exfiltration and account takeover across users.
+
+- id: web-cors-null-origin-allowed
+  category: vuln
+  name: CORS trusts null origin
+  description: Access-Control-Allow-Origin is set to null, which sandboxed iframes and redirects can emit.
+  severity: medium
+  languages:
+  - node
+  - php
+  - java
+  - csharp
+  keywords:
+  - Access-Control-Allow-Origin
+  - 'null'
+  regex: Access-Control-Allow-Origin["':\s]+null\b
+  allowlist:
+    regex: []
+  cwe: CWE-942
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Never allow the null origin; use a strict origin allowlist.
+  secure_code: |
+    // do not emit: Access-Control-Allow-Origin: null
+  technical_impact: Any page can forge a null Origin via a sandboxed iframe to read authed data with credentials.
+  business_impact: Cross-origin theft of authenticated data enabling account compromise.
+
+- id: web-cors-origin-true-with-credentials
+  category: vuln
+  name: CORS origin true combined with credentials
+  description: The cors middleware reflects any origin (origin true) together with credentials true.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - cors
+  - credentials
+  - origin
+  regex: cors\s*\(\s*\{[^}]*(?:origin\s*:\s*true[^}]*credentials\s*:\s*true|credentials\s*:\s*true[^}]*origin\s*:\s*true)
+  allowlist:
+    regex:
+    - function
+    - \[
+    - allowlist
+  cwe: CWE-942
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set origin to an explicit allowlist (array or function) rather than true when using credentials.
+  secure_code: |
+    cors({ origin: ['https://app.example.com'], credentials: true })
+  technical_impact: Every attacker origin can read credentialed cross-origin responses.
+  business_impact: Systematic exfiltration of user data and tokens across all endpoints.
+
+- id: web-csrf-django-exempt-decorator
+  category: vuln
+  name: CSRF protection disabled via csrf_exempt
+  description: The Django view opts out of CSRF verification with the csrf_exempt decorator.
+  severity: medium
+  languages:
+  - python
+  keywords:
+  - csrf_exempt
+  regex: '@csrf_exempt\b'
+  allowlist:
+    regex:
+    - api_view
+    - TokenAuthentication
+  cwe: CWE-352
+  owasp: A01:2021 Broken Access Control
+  remediation: Remove csrf_exempt on cookie-authenticated state-changing views; keep CSRF middleware active.
+  secure_code: |
+    # remove @csrf_exempt; rely on Django CsrfViewMiddleware
+  technical_impact: State-changing requests execute cross-site without a CSRF token.
+  business_impact: Forced email/password changes and fund transfers lead to account takeover.
+
+- id: web-csrf-rails-skip-verify-token
+  category: vuln
+  name: CSRF protection disabled in Rails controller
+  description: skip_before_action verify_authenticity_token turns off Rails CSRF protection.
+  severity: medium
+  languages:
+  - ruby
+  keywords:
+  - verify_authenticity_token
+  regex: skip_before_action\s+:verify_authenticity_token
+  allowlist:
+    regex:
+    - 'only:'
+    - 'if:'
+    - 'unless:'
+  cwe: CWE-352
+  owasp: A01:2021 Broken Access Control
+  remediation: Keep protect_from_forgery enabled; scope any exemption narrowly to token-authenticated APIs.
+  secure_code: |
+    protect_from_forgery with: :exception
+  technical_impact: Cross-site requests mutate state using the victim's session cookie.
+  business_impact: Account and data manipulation via forged requests, leading to takeover.
+
+- id: web-csrf-spring-disabled
+  category: vuln
+  name: CSRF protection disabled in Spring Security
+  description: Spring Security configuration calls csrf().disable(), removing CSRF token checks.
+  severity: medium
+  languages:
+  - java
+  keywords:
+  - csrf
+  - disable
+  regex: \.csrf\s*\([^)]*\)\s*\.disable\s*\(|csrf\s*\([^)]*(?:\.disable|AbstractHttpConfigurer::disable)
+  allowlist:
+    regex:
+    - CookieCsrfTokenRepository
+    - stateless
+    - JWT
+  cwe: CWE-352
+  owasp: A01:2021 Broken Access Control
+  remediation: Leave CSRF enabled for cookie-session apps; only disable for stateless token APIs.
+  secure_code: |
+    http.csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()));
+  technical_impact: Attacker forges authenticated state-changing requests cross-site.
+  business_impact: Unauthorized transactions and settings changes cause account takeover.
+
+- id: web-csrf-cookie-samesite-none
+  category: vuln
+  name: Session cookie SameSite=None weakens CSRF defense
+  description: Setting SameSite=None allows the cookie to be sent on cross-site requests.
+  severity: medium
+  languages:
+  - node
+  - python
+  - php
+  - java
+  - csharp
+  keywords:
+  - SameSite
+  - None
+  regex: '[Ss]ame[Ss]ite\s*[=:]\s*["'']?[Nn]one\b'
+  allowlist:
+    regex:
+    - partitioned
+    - Partitioned
+  cwe: CWE-352
+  owasp: A01:2021 Broken Access Control
+  remediation: Use SameSite=Lax or Strict for session cookies unless a cross-site flow strictly requires None.
+  secure_code: |
+    res.cookie('session', t, { sameSite: 'Lax', httpOnly: true, secure: true });
+  technical_impact: Session cookies accompany cross-site requests, re-enabling CSRF.
+  business_impact: Forged state changes on authenticated accounts drive fraud and takeover.
+
+- id: web-graphql-introspection-enabled
+  category: vuln
+  name: GraphQL introspection enabled in production
+  description: The GraphQL server config sets introspection true, exposing the full schema.
+  severity: low
+  languages:
+  - node
+  keywords:
+  - introspection
+  regex: introspection\s*:\s*true
+  allowlist:
+    regex:
+    - NODE_ENV
+    - development
+    - isDev
+  cwe: CWE-200
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable introspection in production; gate it behind a development environment check.
+  secure_code: |
+    introspection: process.env.NODE_ENV !== 'production'
+  technical_impact: Attacker enumerates the entire schema, revealing hidden mutations and fields for targeted IDOR.
+  business_impact: Accelerated discovery of authorization flaws leading to data breach.
+
+- id: web-graphql-csrf-prevention-disabled
+  category: vuln
+  name: Apollo Server CSRF prevention disabled
+  description: csrfPrevention false lets simple-content-type requests reach GraphQL cross-site.
+  severity: medium
+  languages:
+  - node
+  keywords:
+  - csrfPrevention
+  regex: csrfPrevention\s*:\s*false
+  allowlist:
+    regex: []
+  cwe: CWE-352
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Leave csrfPrevention enabled so mutations require a preflighted content type or CSRF token.
+  secure_code: |
+    new ApolloServer({ csrfPrevention: true })
+  technical_impact: Cross-site form posts invoke GraphQL mutations with the victim's cookies.
+  business_impact: CSRF-driven state changes on authenticated accounts enable takeover.
+
+- id: web-express-trust-proxy-enabled
+  category: vuln
+  name: Express trust proxy enabled allowing IP spoofing
+  description: app.set('trust proxy', true) makes Express trust X-Forwarded-For, spoofable by clients.
+  severity: medium
+  languages:
+  - node
+  keywords:
+  - trust proxy
+  regex: (?:app|express\(\))\.set\s*\(\s*["']trust proxy["']\s*,\s*true
+  allowlist:
+    regex:
+    - loopback
+    - \d+\.\d+
+    - uniquelocal
+  cwe: CWE-348
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set trust proxy to a specific hop count or trusted subnet, not the boolean true.
+  secure_code: |
+    app.set('trust proxy', 1);
+  technical_impact: Attacker forges X-Forwarded-For to bypass IP allowlists and rate limits.
+  business_impact: Rate-limit and access-control bypass enabling brute force and fraud.
+
+- id: web-prototype-pollution-merge-user-input
+  category: vuln
+  name: Prototype pollution via recursive merge of user input
+  description: A deep-merge/set helper receives req.body/query or JSON.parse output, allowing __proto__ pollution.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - merge
+  - defaultsDeep
+  - req.body
+  - JSON.parse
+  regex: (?:_\.)?(?:merge|mergeWith|defaultsDeep|set|setWith)\s*\([^;]*(?:req\.(?:body|query|params)|request\.body|JSON\.parse)
+  context_required:
+  - req.body
+  - req.query
+  - req.params
+  - request.body
+  - JSON.parse
+  allowlist:
+    regex:
+    - Object.create\(null\)
+    - __proto__
+    - hasOwnProperty
+    - structuredClone
+  cwe: CWE-1321
+  owasp: A03:2021 Injection
+  remediation: Guard __proto__/constructor keys, use null-prototype targets, or upgrade to a patched lodash.
+  secure_code: |
+    if (key === '__proto__' || key === 'constructor') continue;
+  technical_impact: Polluted Object.prototype enables auth bypass, DoS, and RCE through downstream sinks.
+  business_impact: Server compromise or privilege escalation across all requests.
+
+- id: web-client-secret-next-public-exposure
+  category: vuln
+  name: Secret exposed via NEXT_PUBLIC environment variable
+  description: A NEXT_PUBLIC_ variable named like a secret is inlined into the client JS bundle.
+  severity: high
+  languages:
+  - node
+  - react
+  keywords:
+  - NEXT_PUBLIC_
+  regex: NEXT_PUBLIC_[A-Z0-9_]*(?:SECRET|PRIVATE|PASSWORD|_KEY|APIKEY|TOKEN)\b
+  allowlist:
+    regex:
+    - PUBLISHABLE
+    - PUBLIC_KEY
+    - CLIENT_ID
+    - MAPS_KEY
+    - ANALYTICS
+  cwe: CWE-200
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Keep secrets in server-only env vars; never prefix sensitive values with NEXT_PUBLIC_.
+  secure_code: |
+    const key = process.env.API_SECRET; // server-side only, no NEXT_PUBLIC_
+  technical_impact: The secret ships to every browser inside the static bundle and is trivially extracted.
+  business_impact: Leaked API keys and tokens enable backend abuse, data theft, and financial loss.
+
+- id: crypto-des-cipher
+  category: vuln
+  name: Weak Block Cipher (DES / 3DES / DESede)
+  description: Use of DES or Triple-DES, both cryptographically broken small-block ciphers.
+  severity: high
+  languages:
+  - java
+  - node
+  - python
+  - csharp
+  - php
+  keywords:
+  - DES
+  - TripleDES
+  - DESede
+  - des-
+  regex: (?:Cipher\.getInstance\(\s*["\x27](?:DES|DESede)|createCipheriv\(\s*["\x27]des-|(?:^|[^A-Za-z])DES3?\.new\(|algorithms\.TripleDES|Crypto\.Cipher\.DES\b)
+  allowlist:
+    regex:
+    - AES
+    - ChaCha20
+  cwe: CWE-327
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Replace DES/3DES with AES-256-GCM.
+  secure_code: |
+    Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+  technical_impact: 56/112-bit effective keys and 64-bit blocks allow brute force and SWEET32 recovery.
+  business_impact: Encrypted data at rest or in transit can be decrypted by an attacker.
+
+- id: crypto-rc4-cipher
+  category: vuln
+  name: Weak Stream Cipher (RC4 / ARCFOUR)
+  description: Use of the RC4 stream cipher, which has practical keystream biases.
+  severity: high
+  languages:
+  - java
+  - node
+  - python
+  - csharp
+  - php
+  keywords:
+  - RC4
+  - ARCFOUR
+  - ARC4
+  - rc4
+  regex: (?:getInstance\(\s*["\x27](?:RC4|ARCFOUR)|createCipheriv\(\s*["\x27]rc4|ARC4\.new\(|algorithms\.ARC4|Crypto\.Cipher\.ARC4)
+  cwe: CWE-327
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Replace RC4 with AES-256-GCM or ChaCha20-Poly1305.
+  secure_code: |
+    cipher = AES.new(key, AES.MODE_GCM)
+  technical_impact: RC4 keystream biases enable plaintext recovery from many ciphertexts.
+  business_impact: Confidential data protected with RC4 is recoverable.
+
+- id: crypto-ecb-mode
+  category: vuln
+  name: Insecure ECB Cipher Mode
+  description: Block cipher used in ECB mode, which leaks plaintext structure.
+  severity: high
+  languages:
+  - java
+  - node
+  - python
+  - csharp
+  - php
+  keywords:
+  - ECB
+  - ecb
+  regex: (?:getInstance\(\s*["\x27][A-Za-z0-9]+/ECB|["\x27][a-z0-9]+-ecb["\x27]|MODE_ECB|CipherMode\.ECB|MCRYPT_MODE_ECB|modes\.ECB\b)
+  cwe: CWE-327
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Use an authenticated mode such as GCM with a random per-message nonce.
+  secure_code: |
+    Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+  technical_impact: Identical plaintext blocks produce identical ciphertext, revealing patterns.
+  business_impact: Structured secrets (images, records) leak despite encryption.
+
+- id: crypto-static-iv
+  category: vuln
+  name: Static or Zero Initialization Vector
+  description: Cipher initialized with an all-zero or hardcoded IV, defeating semantic security.
+  severity: medium
+  languages:
+  - java
+  - node
+  keywords:
+  - IvParameterSpec
+  - iv
+  - IV
+  regex: (?:new IvParameterSpec\(\s*new byte\[\d+\]\s*\)|IvParameterSpec\(\s*["\x27][^"\x27]+["\x27]\.getBytes|iv\s*[:=]\s*Buffer\.from\(\s*["\x27][0-9a-fA-F]{8,}["\x27])
+  cwe: CWE-329
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Generate a fresh cryptographically random IV/nonce per encryption.
+  secure_code: |
+    byte[] iv = new byte[12]; SecureRandom.getInstanceStrong().nextBytes(iv);
+  technical_impact: Reused IVs enable ciphertext correlation and, in GCM, full key/nonce compromise.
+  business_impact: Encryption becomes deterministic and recoverable across messages.
+
+- id: crypto-weak-rsa-keysize
+  category: vuln
+  name: Weak Asymmetric Key Size
+  description: RSA/DSA key generated with fewer than 2048 bits.
+  severity: high
+  languages:
+  - java
+  - node
+  - python
+  - go
+  keywords:
+  - initialize
+  - modulusLength
+  - RSA.generate
+  - key_size
+  - genrsa
+  - GenerateKey
+  regex: (?:\.initialize\(\s*(?:512|768|1024)\b|modulusLength\s*:\s*(?:512|768|1024)\b|RSA\.generate\(\s*(?:512|768|1024)\b|key_size\s*=\s*(?:512|768|1024)\b|rsa\.GenerateKey\([^,]+,\s*(?:512|768|1024)\b|genrsa\D{0,4}(?:512|1024)\b)
+  cwe: CWE-326
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Use RSA >= 2048 bits, or prefer Ed25519 / ECDSA P-256.
+  secure_code: |
+    kpg.initialize(2048);
+  technical_impact: Keys under 2048 bits are factorable with attainable resources.
+  business_impact: Signatures and encryption backed by the key can be forged or broken.
+
+- id: rand-math-random-token
+  category: vuln
+  name: Insecure Randomness for Security Token (Math.random)
+  description: Math.random used to generate a security-sensitive value.
+  severity: high
+  languages:
+  - node
+  - react
+  keywords:
+  - Math.random
+  regex: Math\.random\s*\(\s*\)
+  context_required:
+  - token
+  - secret
+  - password
+  - otp
+  - nonce
+  - salt
+  - session
+  - apiKey
+  - reset
+  - csrf
+  - verification
+  cwe: CWE-338
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Use crypto.randomBytes or crypto.getRandomValues for security values.
+  secure_code: |
+    const token = require("crypto").randomBytes(32).toString("hex");
+  technical_impact: Math.random is a predictable PRNG whose output can be reconstructed.
+  business_impact: Session tokens, OTPs, and reset codes become guessable, enabling takeover.
+
+- id: rand-python-insecure-rng
+  category: vuln
+  name: Insecure Randomness for Security Value (Python random)
+  description: The non-cryptographic random module used for a security-sensitive value.
+  severity: high
+  languages:
+  - python
+  keywords:
+  - random.
+  regex: \brandom\.(?:random|randint|randrange|choice|choices|getrandbits|sample|shuffle|uniform)\s*\(
+  context_required:
+  - token
+  - secret
+  - password
+  - otp
+  - nonce
+  - salt
+  - session
+  - reset
+  - csrf
+  - apikey
+  allowlist:
+    regex:
+    - SystemRandom
+    - secrets\.
+  cwe: CWE-338
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Use the secrets module (secrets.token_urlsafe / token_hex).
+  secure_code: |
+    import secrets; token = secrets.token_urlsafe(32)
+  technical_impact: Mersenne-Twister state is recoverable from a few outputs, making values predictable.
+  business_impact: Predictable tokens allow account takeover and auth bypass.
+
+- id: rand-native-insecure-rng
+  category: vuln
+  name: Insecure Randomness for Security Value (native RNG)
+  description: A non-cryptographic RNG used for a security-sensitive value.
+  severity: high
+  languages:
+  - php
+  - csharp
+  - go
+  keywords:
+  - mt_rand
+  - uniqid
+  - new Random
+  - math/rand
+  - rand.
+  regex: (?:\bmt_rand\s*\(|\buniqid\s*\(|new\s+Random\s*\(|math/rand|rand\.(?:Intn|Int|Float64)\()
+  context_required:
+  - token
+  - secret
+  - password
+  - otp
+  - nonce
+  - salt
+  - session
+  - csrf
+  - reset
+  - apikey
+  allowlist:
+    regex:
+    - RandomNumberGenerator
+    - RNGCryptoServiceProvider
+    - crypto/rand
+  cwe: CWE-338
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Use a CSPRNG (random_bytes in PHP, RandomNumberGenerator in .NET, crypto/rand in Go).
+  secure_code: |
+    $token = bin2hex(random_bytes(32));
+  technical_impact: These generators are seedable/predictable and unfit for secrets.
+  business_impact: Guessable identifiers lead to session hijack and takeover.
+
+- id: jwt-alg-none
+  category: vuln
+  name: JWT alg none Accepted
+  description: JWT configuration allows the none algorithm, disabling signature verification.
+  severity: critical
+  languages:
+  - node
+  - python
+  - java
+  - php
+  - go
+  - ruby
+  keywords:
+  - alg
+  - none
+  - algorithm
+  regex: (?i)(?:["\x27]alg["\x27]\s*:\s*["\x27]none["\x27]|algorithms?\s*[:=]\s*\[?\s*["\x27]none["\x27])
+  cwe: CWE-347
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Pin verification to a specific asymmetric or HMAC algorithm; never allow none.
+  secure_code: |
+    jwt.verify(token, key, { algorithms: ["RS256"] });
+  technical_impact: Anyone can forge a token with an empty signature and arbitrary claims.
+  business_impact: Complete authentication bypass and impersonation of any user.
+
+- id: jwt-verify-disabled
+  category: vuln
+  name: JWT Signature Verification Disabled
+  description: JWT decoded with signature verification explicitly turned off.
+  severity: critical
+  languages:
+  - python
+  - node
+  keywords:
+  - verify
+  - verify_signature
+  regex: (?:verify\s*=\s*False|verify_signature["\x27]?\s*[:=]\s*(?:False|false)|["\x27]verify_signature["\x27]\s*:\s*(?:False|false))
+  cwe: CWE-347
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Always verify the signature; use decode only for non-trusted introspection.
+  secure_code: |
+    jwt.decode(token, key, algorithms=["RS256"])  # verify_signature default True
+  technical_impact: Unsigned or tampered tokens are accepted as valid.
+  business_impact: Attacker forges arbitrary identity and roles.
+
+- id: jwt-algorithm-confusion
+  category: vuln
+  name: JWT Algorithm Confusion (mixed HS and RS)
+  description: Verifier accepts both symmetric and asymmetric algorithms, enabling key confusion.
+  severity: high
+  languages:
+  - node
+  - python
+  - java
+  keywords:
+  - algorithms
+  - HS256
+  - RS256
+  regex: algorithms["\x27]?\s*:\s*\[[^\]]*(?:HS(?:256|384|512)[^\]]*RS(?:256|384|512)|RS(?:256|384|512)[^\]]*HS(?:256|384|512))
+  cwe: CWE-347
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Accept exactly one algorithm family matching the key type.
+  secure_code: |
+    jwt.verify(token, pubKey, { algorithms: ["RS256"] });
+  technical_impact: Attacker signs a token with the public key as an HMAC secret and it validates.
+  business_impact: Full authentication bypass via forged admin tokens.
+
+- id: jwt-hardcoded-secret
+  category: vuln
+  name: Hardcoded JWT Signing Secret
+  description: JWT signed or keyed with a hardcoded string literal.
+  severity: high
+  languages:
+  - node
+  - python
+  - java
+  keywords:
+  - jwt.sign
+  - jwt.encode
+  - hmacShaKeyFor
+  regex: (?:jwt\.sign\([^,]+,\s*["\x27][^"\x27]{4,}["\x27]|jwt\.encode\([^,]+,\s*["\x27][^"\x27]{4,}["\x27]|hmacShaKeyFor\(\s*["\x27][^"\x27]{4,}["\x27])
+  allowlist:
+    regex:
+    - process\.env
+    - os\.environ
+    - getenv
+    - System\.getenv
+  cwe: CWE-798
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Load the signing secret from a secrets manager or environment variable.
+  secure_code: |
+    jwt.sign(payload, process.env.JWT_SECRET);
+  technical_impact: The secret is exposed in source, letting anyone mint valid tokens.
+  business_impact: Attacker forges tokens for any user, full auth bypass.
+
+- id: cred-url-basic-auth
+  category: vuln
+  name: Credentials Embedded in Connection URL
+  description: Username and password hardcoded inline in a service/connection URL.
+  severity: high
+  languages:
+  - python
+  - node
+  - java
+  - go
+  - php
+  - ruby
+  - csharp
+  keywords:
+  - ://
+  - '@'
+  regex: (?:https?|ftp|mongodb(?:\+srv)?|postgres(?:ql)?|mysql|mariadb|redis|amqp|jdbc:[a-z0-9]+)://[^/\s:@"\x27]+:[^/\s@"\x27]+@
+  allowlist:
+    regex:
+    - ://\$\{
+    - ://\$
+    - user:pass@
+    - USER:PASSWORD@
+    - ://%
+  cwe: CWE-798
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Move credentials to environment variables or a secrets vault.
+  secure_code: |
+    const url = `mongodb://${process.env.DB_USER}:${process.env.DB_PASS}@host/db`;
+  technical_impact: Plaintext credentials are committed to source control.
+  business_impact: Anyone with repo access gains direct database or service access.
+
+- id: cred-connstring-password
+  category: vuln
+  name: Hardcoded Password in Connection String
+  description: Literal password inside an ADO/JDBC-style connection string.
+  severity: high
+  languages:
+  - csharp
+  - java
+  - python
+  - php
+  - node
+  keywords:
+  - Password=
+  - Pwd=
+  - User ID
+  - Uid
+  regex: (?i)(?:User ID|Uid|Username)\s*=\s*[^;]+;\s*(?:Password|Pwd)\s*=\s*(?!\s*(?:\$|\{|<|%))[^;"\x27\s]{3,}
+  cwe: CWE-798
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Reference a secret placeholder resolved at runtime, not a literal.
+  secure_code: |
+    "Server=db;User ID=app;Password=${DB_PASSWORD}"
+  technical_impact: Database credentials are exposed in code and config.
+  business_impact: Direct unauthorized database access and data breach.
+
+- id: tls-java-hostname-verify-disabled
+  category: vuln
+  name: TLS Hostname Verification Disabled (Java)
+  description: Java code installs an allow-all hostname verifier.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - HostnameVerifier
+  - ALLOW_ALL
+  regex: (?:ALLOW_ALL_HOSTNAME_VERIFIER|NoopHostnameVerifier|set(?:Default)?HostnameVerifier\(\s*(?:\([^)]*\)\s*->\s*true|new\s+HostnameVerifier))
+  cwe: CWE-297
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Use the default strict verifier and a properly configured trust store.
+  secure_code: |
+    // rely on default HttpsURLConnection hostname verification
+  technical_impact: A MITM presenting any valid certificate for a wrong host is accepted.
+  business_impact: TLS traffic can be intercepted and modified.
+
+- id: tls-java-trustall-manager
+  category: vuln
+  name: TLS Trust-All TrustManager (Java)
+  description: X509TrustManager with an empty check method that accepts any certificate.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - checkServerTrusted
+  - checkClientTrusted
+  regex: (?:checkServerTrusted|checkClientTrusted)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_.]+\s*)?\{\s*\}
+  cwe: CWE-295
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Validate the chain against a trust store; do not implement a no-op trust manager.
+  secure_code: |
+    // use the platform default TrustManagerFactory
+  technical_impact: Any certificate, including self-signed and attacker ones, is trusted.
+  business_impact: Full MITM interception of encrypted connections.
+
+- id: tls-go-insecure-skip-verify
+  category: vuln
+  name: TLS Verification Disabled (Go InsecureSkipVerify)
+  description: Go TLS config sets InsecureSkipVerify to true.
+  severity: high
+  languages:
+  - go
+  keywords:
+  - InsecureSkipVerify
+  regex: InsecureSkipVerify\s*:\s*true
+  cwe: CWE-295
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Remove InsecureSkipVerify and configure a proper RootCAs pool.
+  secure_code: |
+    tls.Config{ MinVersion: tls.VersionTLS12 }
+  technical_impact: Server certificate and hostname are not validated.
+  business_impact: MITM attacker can decrypt and alter traffic.
+
+- id: tls-csharp-cert-validation-bypass
+  category: vuln
+  name: TLS Certificate Validation Bypass (.NET)
+  description: Certificate validation callback unconditionally returns true.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - CertificateValidationCallback
+  - DangerousAccept
+  regex: (?:ServerCertificateValidationCallback|ServerCertificateCustomValidationCallback|RemoteCertificateValidationCallback)\b[^;]*(?:=>\s*true|return\s+true|DangerousAcceptAnyServerCertificateValidator)
+  cwe: CWE-295
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Remove the override; let the platform validate certificates.
+  secure_code: |
+    using var client = new HttpClient(); // default validation
+  technical_impact: All certificates are accepted regardless of chain or host.
+  business_impact: TLS confidentiality and integrity are lost to MITM.
+
+- id: tls-php-curl-verify-disabled
+  category: vuln
+  name: TLS Peer Verification Disabled (PHP cURL)
+  description: cURL configured with SSL peer or host verification turned off.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - CURLOPT_SSL_VERIFYPEER
+  - CURLOPT_SSL_VERIFYHOST
+  regex: CURLOPT_SSL_VERIFY(?:PEER|HOST)\s*(?:,|=>)\s*(?:false|0|FALSE)\b
+  cwe: CWE-295
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Set CURLOPT_SSL_VERIFYPEER to true and CURLOPT_SSL_VERIFYHOST to 2.
+  secure_code: |
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+  technical_impact: Certificate chain and hostname are not checked.
+  business_impact: Outbound requests are trivially interceptable.
+
+- id: tls-legacy-protocol-version
+  category: vuln
+  name: Legacy TLS/SSL Protocol Version Pinned
+  description: Code pins an obsolete protocol (SSLv2/3, TLS 1.0/1.1).
+  severity: medium
+  languages:
+  - java
+  - python
+  - node
+  - csharp
+  - go
+  keywords:
+  - SSLv3
+  - TLSv1
+  - PROTOCOL_
+  - SslProtocols
+  - secureProtocol
+  - VersionTLS10
+  regex: (?:getInstance\(\s*["\x27](?:SSLv3|SSLv2|TLSv1|TLSv1\.1|TLSv1_1)["\x27]|PROTOCOL_(?:SSLv3|SSLv23|TLSv1|TLSv1_1)\b|secureProtocol\s*:\s*["\x27](?:SSLv3|TLSv1|TLSv1_1|TLSv1_method|TLSv1_1_method)|minVersion\s*:\s*["\x27]TLSv1(?:\.1)?["\x27]|SslProtocols\.(?:Ssl2|Ssl3|Tls|Tls11)\b|tls\.Version(?:SSL30|TLS10|TLS11)\b)
+  cwe: CWE-327
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Require TLS 1.2 or higher.
+  secure_code: |
+    SSLContext.getInstance("TLSv1.3");
+  technical_impact: Downgrade and padding-oracle attacks (POODLE, BEAST) become viable.
+  business_impact: Encrypted sessions can be downgraded and decrypted.
+
+- id: auth-timing-unsafe-secret-compare
+  category: vuln
+  name: Timing-Unsafe Secret Comparison
+  description: Secret, token, or signature compared with a non-constant-time operator.
+  severity: medium
+  languages:
+  - node
+  - python
+  - java
+  - php
+  - ruby
+  - go
+  keywords:
+  - ==
+  - '!='
+  - token
+  - secret
+  - password
+  - hmac
+  - signature
+  regex: (?i)\b(?:signature|hmac|auth_?tag|mac|token|secret|passwd|password|api_?key|digest)\s*(?:===|==|!==|!=)\s*(?![=\s]*(?:null|None|undefined|["\x27]["\x27]))
+  allowlist:
+    regex:
+    - timingSafeEqual
+    - compare_digest
+    - hash_equals
+    - MessageDigest\.isEqual
+    - ConstantTimeCompare
+  cwe: CWE-208
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Compare secrets with a constant-time function.
+  secure_code: |
+    crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  technical_impact: Byte-by-byte short-circuit comparison leaks the secret via timing.
+  business_impact: Attacker recovers API keys or HMAC tags through timing analysis.
+
+- id: auth-hardcoded-credential-compare
+  category: vuln
+  name: Hardcoded Credential Comparison
+  description: Password, secret, or token checked against a hardcoded string literal.
+  severity: high
+  languages:
+  - node
+  - python
+  - java
+  - php
+  - csharp
+  - ruby
+  keywords:
+  - password
+  - secret
+  - api_key
+  - token
+  - ==
+  regex: (?i)\b(?:password|passwd|pwd|secret|api_?key|auth_?token|access_?token)\b\s*(?:===|==|\.equals\(\s*)["\x27][^"\x27]{3,}["\x27]
+  cwe: CWE-798
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Verify credentials against a hashed store, never a literal.
+  secure_code: |
+    if (bcrypt.compareSync(input, user.passwordHash)) { ... }
+  technical_impact: A backdoor or shared static credential is embedded in code.
+  business_impact: Anyone reading the source authenticates with the known value.
+
+- id: session-hardcoded-secret
+  category: vuln
+  name: Hardcoded Session Signing Secret
+  description: Express session or cookie parser initialized with a literal secret.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - session
+  - cookieParser
+  - secret
+  regex: (?:session\(\s*\{[^}]*secret\s*:\s*["\x27][^"\x27]+["\x27]|cookieSession\(\s*\{[^}]*secret\s*:\s*["\x27][^"\x27]+["\x27]|cookieParser\(\s*["\x27][^"\x27]+["\x27])
+  allowlist:
+    regex:
+    - process\.env
+  cwe: CWE-798
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Load the session secret from the environment.
+  secure_code: |
+    app.use(session({ secret: process.env.SESSION_SECRET }));
+  technical_impact: Known secret lets an attacker forge or tamper signed session cookies.
+  business_impact: Session forgery leading to account takeover.
+
+- id: saml-signature-verification-disabled
+  category: vuln
+  name: SAML Assertion Signature Not Required
+  description: SAML config disables assertion/response signature enforcement.
+  severity: high
+  languages:
+  - node
+  - python
+  - php
+  - java
+  keywords:
+  - wantAssertionsSigned
+  - want_assertions_signed
+  - validateSignature
+  regex: (?i)(?:want(?:AssertionsSigned|MessageSigned|AuthnResponseSigned)|want_assertions_signed)\s*[:=]\s*(?:false|False)|validateSignature\s*[:=]\s*(?:false|False)|checkResponseSignature\s*[:=]\s*(?:false|False)
+  cwe: CWE-347
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Require signed assertions and validate against the IdP certificate.
+  secure_code: |
+    { wantAssertionsSigned: true, wantMessageSigned: true }
+  technical_impact: Unsigned or stripped-signature assertions are accepted.
+  business_impact: Attacker forges a SAML assertion to log in as any user or admin.
+
+- id: oauth-redirect-uri-wildcard
+  category: vuln
+  name: OAuth Wildcard Redirect URI
+  description: Registered OAuth redirect URI contains a wildcard, weakening validation.
+  severity: medium
+  languages:
+  - node
+  - python
+  - php
+  - java
+  - go
+  keywords:
+  - redirect_uri
+  - redirectUri
+  - '*'
+  regex: (?i)redirect_uris?["\x27]?\s*[:=]\s*["\x27][^"\x27]*\*
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Register exact, fully-qualified redirect URIs with no wildcards.
+  secure_code: |
+    redirect_uris: ["https://app.example.com/oauth/callback"]
+  technical_impact: A wildcard lets an attacker land the auth code on a controlled host.
+  business_impact: OAuth code/token theft leading to account takeover.
+
+- id: xxe-parser-external-entities
+  category: vuln
+  name: XML Parser With External Entities Enabled
+  description: XML parser explicitly configured to resolve DTDs / external entities.
+  severity: high
+  languages:
+  - java
+  - csharp
+  - php
+  - python
+  keywords:
+  - doctype
+  - XmlResolver
+  - DtdProcessing
+  - libxml_disable_entity_loader
+  - resolve_entities
+  - external-general-entities
+  regex: (?:disallow-doctype-decl["\x27]\s*,\s*false|external-general-entities["\x27]\s*,\s*true|setExpandEntityReferences\(\s*true|DtdProcessing\.Parse|new\s+XmlUrlResolver|ProhibitDtd\s*=\s*false|libxml_disable_entity_loader\(\s*false|resolve_entities\s*=\s*True|feature_external_ges\s*,\s*(?:True|1)|XMLParser\([^)]*resolve_entities\s*=\s*True)
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable DTDs and external entity resolution in the parser.
+  secure_code: |
+    dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+  technical_impact: XXE allows local file read, SSRF, and denial of service.
+  business_impact: Internal files and metadata endpoints are exfiltrated via crafted XML.
+
+- id: log-sensitive-data-exposure
+  category: vuln
+  name: Sensitive Data Written to Logs
+  description: Password, secret, token, or key passed into a logging/print call.
+  severity: medium
+  languages:
+  - node
+  - python
+  - java
+  - go
+  - php
+  keywords:
+  - log
+  - print
+  - password
+  - secret
+  - token
+  regex: (?i)(?:console\.(?:log|debug|info|warn|error)|logger?\.(?:debug|info|warn|error|trace)|System\.out\.print(?:ln)?|fmt\.Print(?:f|ln)?|print)\s*\([^)]*(?:password|passwd|secret|api_?key|access_?token|private_?key|credentials?)\b
+  allowlist:
+    regex:
+    - redact
+    - mask
+    - \*\*\*
+    - passwordPolicy
+    - hasPassword
+    - resetPasswordUrl
+  cwe: CWE-532
+  owasp: A09:2021 Security Logging and Monitoring Failures
+  remediation: Redact or omit secrets before logging.
+  secure_code: |
+    logger.info("auth ok for user %s", user.id)  # no secret
+  technical_impact: Credentials persist in log files and aggregation systems.
+  business_impact: Log access (or a log leak) yields plaintext credentials.
+
+- id: iac-tf-s3-public-acl
+  category: vuln
+  name: Terraform S3 Bucket Public ACL
+  description: S3 bucket/object ACL set to a public-read or public-read-write canned ACL.
+  severity: high
+  languages:
+  - terraform
+  keywords:
+  - public-read
+  - acl
+  regex: acl\s*=\s*["\x27]public-read(?:-write)?["\x27]
+  cwe: CWE-732
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Use private ACL and an aws_s3_bucket_public_access_block.
+  secure_code: |
+    acl = "private"
+  technical_impact: Bucket contents are readable (or writable) by anyone on the internet.
+  business_impact: Data exposure or attacker-controlled content injection.
+
+- id: iac-tf-open-security-group
+  category: vuln
+  name: Terraform Security Group Open to World
+  description: Security group rule allows 0.0.0.0/0 or ::/0.
+  severity: medium
+  languages:
+  - terraform
+  keywords:
+  - 0.0.0.0/0
+  - cidr_blocks
+  - ::/0
+  regex: cidr_blocks\s*=\s*\[[^\]]*["\x27](?:0\.0\.0\.0/0|::/0)["\x27]
+  cwe: CWE-284
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Restrict ingress CIDRs to known networks; avoid world-open ingress.
+  secure_code: |
+    cidr_blocks = ["10.0.0.0/16"]
+  technical_impact: Exposed ports (SSH/RDP/DB) reachable from the entire internet.
+  business_impact: Brute-force and direct exploitation of internal services.
+
+- id: iac-tf-public-access-block-disabled
+  category: vuln
+  name: Terraform S3 Public Access Block Disabled
+  description: S3 public access block guardrail set to false.
+  severity: high
+  languages:
+  - terraform
+  keywords:
+  - block_public_acls
+  - restrict_public_buckets
+  - ignore_public_acls
+  regex: (?:block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)\s*=\s*false
+  cwe: CWE-732
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set all four public access block settings to true.
+  secure_code: |
+    block_public_acls = true
+    restrict_public_buckets = true
+  technical_impact: Bucket or ACL policies can expose objects publicly.
+  business_impact: Accidental public exposure of stored data.
+
+- id: iac-tf-rds-publicly-accessible
+  category: vuln
+  name: Terraform RDS Publicly Accessible
+  description: RDS/database instance flagged publicly_accessible = true.
+  severity: high
+  languages:
+  - terraform
+  keywords:
+  - publicly_accessible
+  regex: publicly_accessible\s*=\s*true
+  cwe: CWE-284
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set publicly_accessible = false and place the DB in a private subnet.
+  secure_code: |
+    publicly_accessible = false
+  technical_impact: Database gets a public endpoint reachable from the internet.
+  business_impact: Direct database attack surface and potential data breach.
+
+- id: iac-tf-hardcoded-secret
+  category: vuln
+  name: Terraform Hardcoded Secret
+  description: Password, secret, token, or access key hardcoded as a literal in Terraform.
+  severity: high
+  languages:
+  - terraform
+  keywords:
+  - password
+  - secret
+  - access_key
+  - token
+  regex: (?i)(?:password|secret|access_key|token)\s*=\s*"[^"${][^"]*"
+  allowlist:
+    regex:
+    - var\.
+    - data\.
+    - random_password
+  cwe: CWE-798
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Use variables, a secrets manager data source, or random_password.
+  secure_code: |
+    password = var.db_password
+  technical_impact: Secrets are committed to version control in plaintext.
+  business_impact: Anyone with repo/state access obtains live credentials.
+
+- id: iac-docker-curl-pipe-shell
+  category: vuln
+  name: Remote Script Piped to Shell
+  description: Downloaded script piped directly into a shell interpreter.
+  severity: high
+  languages:
+  - dockerfile
+  - yaml
+  keywords:
+  - curl
+  - wget
+  - '| bash'
+  - '| sh'
+  regex: (?:curl|wget)\s+[^|\n]*\|\s*(?:sudo\s+)?(?:bash|sh|zsh)\b
+  cwe: CWE-494
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Pin and checksum-verify the artifact before execution.
+  secure_code: |
+    RUN curl -fsSLo i.sh https://x/i.sh && echo "<sha256>  i.sh" | sha256sum -c && sh i.sh
+  technical_impact: A compromised or MITM'd endpoint runs arbitrary code at build time.
+  business_impact: Supply-chain compromise of the built image.
+
+- id: iac-docker-user-root
+  category: vuln
+  name: Dockerfile Runs as Root
+  description: Dockerfile explicitly sets the runtime user to root.
+  severity: low
+  languages:
+  - dockerfile
+  keywords:
+  - USER root
+  regex: ^\s*USER\s+root\b
+  cwe: CWE-250
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Create and switch to a non-root user before CMD/ENTRYPOINT.
+  secure_code: |
+    RUN adduser -D app
+    USER app
+  technical_impact: A container breakout inherits root on the host namespace.
+  business_impact: Larger blast radius if the containerized app is compromised.
+
+- id: iac-k8s-privileged-container
+  category: vuln
+  name: Kubernetes Privileged Container
+  description: Container security context requests privileged mode.
+  severity: high
+  languages:
+  - yaml
+  keywords:
+  - privileged
+  regex: privileged\s*:\s*true
+  cwe: CWE-250
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Remove privileged; grant only the specific capabilities required.
+  secure_code: |
+    securityContext:
+      privileged: false
+  technical_impact: The container gains near-root access to the host kernel and devices.
+  business_impact: Container escape leading to full node compromise.
+
+- id: iac-k8s-host-namespace
+  category: vuln
+  name: Kubernetes Host Namespace Sharing
+  description: Pod shares the host PID, network, or IPC namespace.
+  severity: high
+  languages:
+  - yaml
+  keywords:
+  - hostPID
+  - hostNetwork
+  - hostIPC
+  regex: host(?:PID|Network|IPC)\s*:\s*true
+  cwe: CWE-668
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Do not share host namespaces unless strictly required.
+  secure_code: |
+    spec:
+      hostPID: false
+      hostNetwork: false
+  technical_impact: Pod can observe/interfere with host processes, network, and IPC.
+  business_impact: Lateral movement and node-level compromise.
+
+- id: iac-k8s-allow-privilege-escalation
+  category: vuln
+  name: Kubernetes Privilege Escalation Allowed
+  description: Container allows privilege escalation or runs as root.
+  severity: medium
+  languages:
+  - yaml
+  keywords:
+  - allowPrivilegeEscalation
+  - runAsNonRoot
+  regex: (?:allowPrivilegeEscalation\s*:\s*true|runAsNonRoot\s*:\s*false)
+  cwe: CWE-250
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set allowPrivilegeEscalation false and runAsNonRoot true.
+  secure_code: |
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+  technical_impact: A process can gain more privileges than its parent (setuid, capabilities).
+  business_impact: Easier container escape and host compromise.
+
+- id: iac-k8s-dangerous-capabilities
+  category: vuln
+  name: Kubernetes Dangerous Linux Capabilities
+  description: Container adds SYS_ADMIN, NET_ADMIN, SYS_PTRACE, or ALL capabilities.
+  severity: high
+  languages:
+  - yaml
+  keywords:
+  - SYS_ADMIN
+  - NET_ADMIN
+  - capabilities
+  - add
+  regex: (?:add:\s*\[[^\]]*\b(?:SYS_ADMIN|NET_ADMIN|NET_RAW|SYS_PTRACE|ALL)\b|^\s*-\s+(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|ALL)\s*$)
+  cwe: CWE-250
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Drop ALL capabilities and add back only the minimal required set.
+  secure_code: |
+    capabilities:
+      drop: ["ALL"]
+  technical_impact: Elevated capabilities enable mounts, ptrace, and raw sockets that aid escape.
+  business_impact: Container-to-host breakout risk.
+
+- id: iac-gha-untrusted-input-injection
+  category: vuln
+  name: GitHub Actions Untrusted Input Expression Injection
+  description: Attacker-controlled github.event field interpolated directly into a workflow.
+  severity: high
+  languages:
+  - yaml
+  keywords:
+  - github.event
+  - ${{
+  regex: \$\{\{\s*github\.event\.(?:issue|pull_request|comment|review|head_commit|discussion)[^}]*\.(?:title|body|name|ref|label|message|email|login|description)
+  cwe: CWE-94
+  owasp: A03:2021 Injection
+  remediation: Pass the value via an env var and reference it quoted in the shell.
+  secure_code: |
+    env: { TITLE: ${{ github.event.pull_request.title }} }
+    run: echo "$TITLE"
+  technical_impact: A newline or backtick in the field executes attacker shell in the runner.
+  business_impact: Secret exfiltration and repository compromise via a fork PR.
+
+- id: iac-gha-prtarget-checkout-untrusted
+  category: vuln
+  name: GitHub Actions Checkout of Untrusted PR Ref
+  description: Workflow checks out the PR head ref, running attacker code with privileges.
+  severity: high
+  languages:
+  - yaml
+  keywords:
+  - pull_request.head
+  - 'ref:'
+  regex: ref\s*:\s*\$\{\{\s*github\.event\.pull_request\.head\.(?:ref|sha)
+  cwe: CWE-829
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Avoid pull_request_target with a head checkout; use pull_request or gate on approval.
+  secure_code: |
+    on: pull_request  # runs without secrets/write token
+  technical_impact: Untrusted fork code executes in a context holding the write GITHUB_TOKEN and secrets.
+  business_impact: Pwnrequest secret theft and pushes to protected branches.
+
+# ============ Extended rules mined from bughunting/bughunting2 skills ============
+- id: dotnet-request-validation-disabled
+  category: vuln
+  name: ASP.NET Request Validation Disabled
+  description: validateRequest="false" or requestValidationMode="2.0" turns off the built-in XSS/markup request filter.
+  severity: medium
+  languages:
+  - xml
+  - html
+  keywords:
+  - validateRequest="false"
+  - requestValidationMode="2.0"
+  - validateRequest
+  regex: validateRequest\s*=\s*"false"|requestValidationMode\s*=\s*"2\.0"
+  cwe: CWE-20
+  owasp: A03:2021 Injection
+  remediation: Leave request validation enabled (default) and HTML-encode output; scope any exception to a single field.
+  secure_code: |
+    <pages validateRequest="true" />
+    <httpRuntime requestValidationMode="4.5" targetFramework="4.8" />
+  technical_impact: The framework no longer rejects markup in query/form input, re-opening reflected and stored XSS sinks.
+  business_impact: Session theft and account takeover through cross-site scripting on any page that echoes user input.
+
+- id: csharp-request-validation-attribute
+  category: vuln
+  name: ASP.NET MVC ValidateInput(false)
+  description: The [ValidateInput(false)] attribute disables request validation for a controller or action.
+  severity: medium
+  languages:
+  - csharp
+  keywords:
+  - ValidateInput
+  - ValidateInput(false
+  regex: \[\s*ValidateInput\s*\(\s*false\s*\)\s*\]
+  cwe: CWE-20
+  owasp: A03:2021 Injection
+  remediation: Remove the attribute; use [AllowHtml] on the single property that legitimately accepts markup, plus a sanitizer.
+  secure_code: |
+    [HttpPost]
+    public ActionResult Save([AllowHtml] string bio) { bio = _sanitizer.Sanitize(bio); }
+  technical_impact: Raw markup reaches the action's model, enabling XSS and HTML injection through that endpoint.
+  business_impact: Attacker-controlled scripts execute in victim browsers, leading to credential and session compromise.
+
+- id: dotnet-viewstate-mac-disabled
+  category: vuln
+  name: ASP.NET ViewState MAC Disabled
+  description: enableViewStateMac="false" removes the integrity signature that prevents ViewState tampering.
+  severity: high
+  languages:
+  - xml
+  - html
+  keywords:
+  - enableViewStateMac="false"
+  - enableViewStateMac
+  regex: enableViewStateMac\s*=\s*"false"
+  cwe: CWE-345
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Never disable ViewState MAC; keep enableViewStateMac="true" and use a fixed, secret machineKey across the farm.
+  secure_code: |
+    <pages enableViewStateMac="true" viewStateEncryptionMode="Always" />
+  technical_impact: Unsigned ViewState is attacker-forgeable, and the LosFormatter deserialization path yields remote code execution.
+  business_impact: Full server compromise under the application-pool identity via a forged ViewState payload.
+
+- id: dotnet-viewstate-encryption-never
+  category: vuln
+  name: ASP.NET ViewState Encryption Disabled
+  description: viewStateEncryptionMode="Never" leaves ViewState signed-only, exposing its contents and easing forgery if the key leaks.
+  severity: medium
+  languages:
+  - xml
+  - html
+  keywords:
+  - viewStateEncryptionMode="Never"
+  - viewStateEncryptionMode
+  regex: viewStateEncryptionMode\s*=\s*"Never"
+  cwe: CWE-311
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Set viewStateEncryptionMode="Always" so ViewState is both encrypted and signed.
+  secure_code: |
+    <pages viewStateEncryptionMode="Always" enableViewStateMac="true" />
+  technical_impact: Sensitive server-side control state is readable, and a recovered validation key alone permits ViewState forgery.
+  business_impact: Disclosure of internal state plus a shorter path to ViewState-deserialization remote code execution.
+
+- id: dotnet-debug-enabled
+  category: vuln
+  name: ASP.NET Debug Compilation Enabled in Production
+  description: <compilation debug="true"> ships verbose errors, disables optimizations, and lengthens request timeouts.
+  severity: medium
+  languages:
+  - xml
+  keywords:
+  - debug="true"
+  - compilation
+  regex: <compilation[^>]*\bdebug\s*=\s*"true"
+  cwe: CWE-489
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set debug="false" for production deployments and enable <deployment retail="true"/> on the server.
+  secure_code: |
+    <compilation debug="false" targetFramework="4.8" />
+  technical_impact: Detailed exception pages leak source paths, versions, and stack traces, and the app is more DoS-prone.
+  business_impact: Reconnaissance data handed to attackers and degraded availability under load.
+
+- id: dotnet-custom-errors-off
+  category: vuln
+  name: ASP.NET customErrors Off (Stack Trace Disclosure)
+  description: <customErrors mode="Off"> returns full stack traces and framework banners to remote clients.
+  severity: medium
+  languages:
+  - xml
+  keywords:
+  - customErrors
+  - mode="Off"
+  regex: <customErrors[^>]*\bmode\s*=\s*"Off"
+  cwe: CWE-209
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Use mode="RemoteOnly" (or On) with a generic defaultRedirect error page in production.
+  secure_code: |
+    <customErrors mode="RemoteOnly" defaultRedirect="~/Error" />
+  technical_impact: Yellow-screen-of-death pages expose method names, file paths, connection strings, and exact patch levels.
+  business_impact: Internal architecture and occasionally credentials are disclosed to anonymous internet users.
+
+- id: dotnet-trace-enabled
+  category: vuln
+  name: ASP.NET Trace Enabled
+  description: <trace enabled="true"> exposes trace.axd with recent requests, headers, cookies, and form values.
+  severity: high
+  languages:
+  - xml
+  keywords:
+  - <trace
+  - enabled="true"
+  regex: <trace[^>]*\benabled\s*=\s*"true"
+  cwe: CWE-215
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable tracing in production (enabled="false") and never set localOnly="false".
+  secure_code: |
+    <trace enabled="false" localOnly="true" />
+  technical_impact: trace.axd dumps live request data including Authorization headers, session cookies, and posted form fields.
+  business_impact: Direct leakage of user session tokens and PII enabling session hijacking.
+
+- id: csharp-path-traversal-mappath
+  category: vuln
+  name: .NET Path Traversal via Server.MapPath
+  description: Server.MapPath called on Request input lets an attacker traverse outside the intended directory.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - Server.MapPath
+  - MapPath
+  regex: Server\.MapPath\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  allowlist:
+    regex:
+    - Path\.GetFileName\(
+  cwe: CWE-22
+  owasp: A01:2021 Broken Access Control
+  remediation: Strip the path with Path.GetFileName, resolve, then verify the result stays under the intended root.
+  secure_code: |
+    var name = Path.GetFileName(Request["file"]);
+    var full = Server.MapPath("~/uploads/" + name);
+  technical_impact: Attacker resolves arbitrary server paths (../../web.config) for read or write access.
+  business_impact: Disclosure of configuration secrets and connection strings, or arbitrary file write to a web-executable path.
+
+- id: csharp-path-traversal-fileio
+  category: vuln
+  name: .NET Path Traversal via File I/O
+  description: File.ReadAll*/OpenRead or Path.Combine fed with Request input allows directory traversal file access.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - File.ReadAll
+  - Path.Combine
+  - File.OpenRead
+  regex: File\.(?:ReadAllText|ReadAllBytes|ReadAllLines|OpenRead|OpenText|WriteAllText)\([^)]*Request|Path\.Combine\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  allowlist:
+    regex:
+    - Path\.GetFileName\(
+    - StartsWith\(
+  cwe: CWE-22
+  owasp: A01:2021 Broken Access Control
+  remediation: Canonicalize with Path.GetFullPath and reject any result that does not start with the whitelisted base directory.
+  secure_code: |
+    var full = Path.GetFullPath(Path.Combine(baseDir, Path.GetFileName(Request["f"])));
+    if (!full.StartsWith(baseDir)) return Forbid();
+  technical_impact: Reads or writes files outside the web root via ../ sequences in user input.
+  business_impact: Theft of secrets and source, or remote code execution through a written .aspx handler.
+
+- id: csharp-ssrf-httpclient
+  category: vuln
+  name: .NET SSRF via HttpClient
+  description: HttpClient request methods invoked with a Request-controlled URL permit server-side request forgery.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - GetAsync
+  - PostAsync
+  - SendAsync
+  regex: \.(?:GetAsync|GetStringAsync|GetByteArrayAsync|GetStreamAsync|PostAsync|PutAsync|SendAsync)\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  cwe: CWE-918
+  owasp: A10:2021 Server-Side Request Forgery
+  remediation: Allowlist destination hosts and schemes, resolve DNS, and block link-local/private ranges before the call.
+  secure_code: |
+    if (!AllowedHosts.Contains(new Uri(url).Host)) return BadRequest();
+    var resp = await _http.GetAsync(url);
+  technical_impact: Attacker drives outbound requests to cloud metadata (169.254.169.254) and internal-only services.
+  business_impact: Theft of cloud IAM credentials and reach into the internal network for lateral movement.
+
+- id: csharp-ssrf-legacy-webrequest
+  category: vuln
+  name: .NET SSRF via WebRequest/WebClient
+  description: WebRequest.Create or WebClient download methods called with Request input allow server-side request forgery.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - WebRequest.Create
+  - DownloadString
+  - DownloadData
+  regex: WebRequest\.Create\([^)]*Request|\.(?:DownloadString|DownloadData|DownloadFile|OpenRead)\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  cwe: CWE-918
+  owasp: A10:2021 Server-Side Request Forgery
+  remediation: Validate the URI against an allowlist of hosts and schemes and forbid redirects to private ranges.
+  secure_code: |
+    var uri = new Uri(input);
+    if (uri.Scheme != Uri.UriSchemeHttps || !Allowed.Contains(uri.Host)) throw new SecurityException();
+  technical_impact: Server fetches attacker-chosen internal URLs, exposing metadata endpoints and admin panels.
+  business_impact: Cloud credential compromise and internal service access from a single request.
+
+- id: csharp-open-redirect
+  category: vuln
+  name: .NET Open Redirect
+  description: Response.Redirect or MVC Redirect built from Request input sends users to an attacker-chosen URL.
+  severity: medium
+  languages:
+  - csharp
+  keywords:
+  - Response.Redirect
+  - return Redirect
+  regex: Response\.Redirect(?:Permanent)?\([^)]*Request|return\s+Redirect\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  allowlist:
+    regex:
+    - Url\.IsLocalUrl\(
+    - RedirectToAction\(
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Only redirect to local URLs; gate with Url.IsLocalUrl or a strict allowlist of absolute targets.
+  secure_code: |
+    var next = Request["returnUrl"];
+    return Url.IsLocalUrl(next) ? Redirect(next) : RedirectToAction("Index");
+  technical_impact: The application vouches for a redirect to an external phishing or token-stealing page.
+  business_impact: Credential phishing and OAuth token theft leveraging the trusted domain.
+
+- id: csharp-ldap-injection-filter
+  category: vuln
+  name: .NET LDAP Injection via DirectorySearcher.Filter
+  description: A DirectorySearcher filter assembled by concatenating user input allows LDAP filter injection.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - .Filter
+  - DirectorySearcher
+  regex: \.Filter\s*=\s*[^;]*"\s*\+|new\s+DirectorySearcher\([^)]*"\s*\+
+  context_required:
+  - +
+  - Request
+  - user
+  cwe: CWE-90
+  owasp: A03:2021 Injection
+  remediation: Escape input for LDAP (each special char to its \\XX form) before inserting it into the filter.
+  secure_code: |
+    var safe = LdapEncoder.FilterEncode(Request["u"]);
+    searcher.Filter = "(sAMAccountName=" + safe + ")";
+  technical_impact: Attacker rewrites the LDAP query to bypass filters or enumerate directory objects.
+  business_impact: Authentication bypass and mass disclosure of directory user records.
+
+- id: csharp-xpath-injection
+  category: vuln
+  name: .NET XPath Injection
+  description: SelectNodes/SelectSingleNode/Evaluate with a concatenated user string enables XPath injection.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - SelectNodes
+  - SelectSingleNode
+  - Evaluate
+  regex: \.(?:SelectNodes|SelectSingleNode|Evaluate)\([^)]*"\s*\+
+  context_required:
+  - +
+  - Request
+  - user
+  cwe: CWE-643
+  owasp: A03:2021 Injection
+  remediation: Use a parameterized XPathExpression with XsltArgumentList/variables instead of string concatenation.
+  secure_code: |
+    var expr = nav.Compile("/users/user[@name=$n]");
+    var args = new XsltArgumentList(); args.AddParam("n", "", Request["u"]);
+  technical_impact: Attacker alters the XPath query to return unauthorized nodes or bypass authentication logic.
+  business_impact: Disclosure of the full XML data store and login bypass on XML-backed auth.
+
+- id: csharp-deserialization-unsafe-formatter
+  category: vuln
+  name: Unsafe .NET Type-Aware Serializer
+  description: NetDataContractSerializer, LosFormatter, ObjectStateFormatter, or SoapFormatter embed type info and enable gadget-chain RCE on untrusted input.
+  severity: critical
+  languages:
+  - csharp
+  keywords:
+  - NetDataContractSerializer
+  - LosFormatter
+  - ObjectStateFormatter
+  - SoapFormatter
+  regex: new\s+(?:NetDataContractSerializer|LosFormatter|ObjectStateFormatter|SoapFormatter)\s*\(
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Never deserialize untrusted data with type-aware formatters; use DataContractSerializer with a fixed known type or System.Text.Json.
+  secure_code: |
+    var ser = new DataContractSerializer(typeof(Order));
+    var order = (Order)ser.ReadObject(trustedStream);
+  technical_impact: A crafted payload instantiates gadget types (TypeConfuseDelegate) yielding arbitrary command execution.
+  business_impact: Full remote code execution and server takeover from any deserialized attacker input.
+
+- id: csharp-deserialization-jsserializer-resolver
+  category: vuln
+  name: JavaScriptSerializer with Type Resolver
+  description: JavaScriptSerializer constructed with a JavaScriptTypeResolver honors __type, allowing polymorphic deserialization RCE.
+  severity: critical
+  languages:
+  - csharp
+  keywords:
+  - JavaScriptSerializer
+  - Resolver
+  regex: new\s+JavaScriptSerializer\([^)]*Resolver
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Deserialize with a parameterless JavaScriptSerializer (or System.Text.Json) into a fixed model; never use a SimpleTypeResolver on untrusted JSON.
+  secure_code: |
+    var data = new JavaScriptSerializer().Deserialize<Dto>(json);
+  technical_impact: The __type field selects an arbitrary attacker-chosen CLR type, reaching deserialization gadgets and RCE.
+  business_impact: Remote code execution via a malicious JSON body posted to the endpoint.
+
+- id: csharp-deserialization-xmlserializer-dynamic-type
+  category: vuln
+  name: XmlSerializer with Attacker-Controlled Type
+  description: XmlSerializer instantiated with a runtime type derived from Request input lets an attacker choose the deserialized CLR type.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - XmlSerializer
+  - Type.GetType
+  regex: new\s+XmlSerializer\([^)]*(?:Type\.GetType|Request)
+  context_required:
+  - Request
+  - Type.GetType
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Bind XmlSerializer to a single compile-time typeof(T); never resolve the target type from user input.
+  secure_code: |
+    var ser = new XmlSerializer(typeof(Invoice));
+    var inv = (Invoice)ser.Deserialize(reader);
+  technical_impact: Attacker selects an unexpected type whose setters/constructors reach dangerous behavior during deserialization.
+  business_impact: Type-confusion leading to data tampering or a deserialization gadget path to code execution.
+
+- id: csharp-xxe-xmldocument-load
+  category: vuln
+  name: .NET XXE via XmlDocument Load
+  description: XmlDocument.Load/LoadXml (and XDocument.Load) on Request input resolve external entities on legacy frameworks.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - LoadXml
+  - .Load(
+  regex: \.LoadXml\([^)]*Request|\.Load\([^)]*Request
+  context_required:
+  - Request
+  - Request.InputStream
+  - Request.Form
+  allowlist:
+    regex:
+    - XmlResolver\s*=\s*null
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set XmlResolver = null on the XmlDocument before loading untrusted XML (default on .NET 4.5.2+, explicit on older).
+  secure_code: |
+    var doc = new XmlDocument { XmlResolver = null };
+    doc.LoadXml(Request["xml"]);
+  technical_impact: External entities read local files and reach internal URLs, exfiltrating data via in-band or OOB channels.
+  business_impact: Disclosure of web.config secrets, SSRF into the cloud metadata service, and internal network access.
+
+- id: csharp-xxe-legacy-xmltextreader
+  category: vuln
+  name: .NET XXE via Legacy XmlTextReader
+  description: XmlTextReader (or ProhibitDtd set false) resolves DTDs and external entities by default on legacy frameworks.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - XmlTextReader
+  - ProhibitDtd
+  regex: new\s+XmlTextReader\s*\(|ProhibitDtd\s*=\s*false
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Use XmlReader.Create with a hardened XmlReaderSettings (DtdProcessing.Prohibit, XmlResolver null) instead of XmlTextReader.
+  secure_code: |
+    var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+    using var reader = XmlReader.Create(stream, settings);
+  technical_impact: Inline and parameter entities read files and trigger OOB fetches during parsing.
+  business_impact: Server file disclosure and SSRF pivoting into internal infrastructure.
+
+- id: csharp-xxe-xmlresolver-external
+  category: vuln
+  name: .NET External XML Resolution Enabled
+  description: Assigning XmlUrlResolver (or using an XIncludingReader) re-enables external entity and XInclude fetching.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - XmlUrlResolver
+  - XIncludingReader
+  regex: XmlResolver\s*=\s*new\s+XmlUrlResolver|new\s+XIncludingReader\s*\(
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Leave XmlResolver null; if resolution is required use a locked-down XmlSecureResolver, and do not enable XInclude on untrusted XML.
+  secure_code: |
+    var settings = new XmlReaderSettings { XmlResolver = null };
+  technical_impact: The parser fetches attacker-referenced external DTDs and included documents, enabling XXE and SSRF.
+  business_impact: File exfiltration and internal request forgery from any XML the resolver processes.
+
+- id: csharp-xslt-script-enabled
+  category: vuln
+  name: XSLT Script Execution Enabled
+  description: XsltSettings.TrustedXslt or EnableScript true lets an XSLT stylesheet run embedded C# code.
+  severity: critical
+  languages:
+  - csharp
+  keywords:
+  - XsltSettings
+  - TrustedXslt
+  - EnableScript
+  regex: XsltSettings\.TrustedXslt|new\s+XsltSettings\(\s*true\s*,\s*true\s*\)|\.EnableScript\s*=\s*true
+  cwe: CWE-94
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Load stylesheets with XsltSettings.Default (script and document() disabled) and a null resolver; never trust user-supplied XSLT.
+  secure_code: |
+    var xslt = new XslCompiledTransform();
+    xslt.Load(path, XsltSettings.Default, null);
+  technical_impact: An attacker-controlled stylesheet with msxsl:script executes arbitrary .NET code in-process.
+  business_impact: Remote code execution whenever untrusted XSLT can reach the transform.
+
+- id: csharp-unsafe-reflection
+  category: vuln
+  name: .NET Unsafe Reflection from User Input
+  description: Type.GetType or Activator.CreateInstance driven by Request input instantiates attacker-named types.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - Type.GetType
+  - Activator.CreateInstance
+  regex: Type\.GetType\([^)]*Request|Activator\.CreateInstance\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  cwe: CWE-470
+  owasp: A03:2021 Injection
+  remediation: Map user input to a fixed allowlist of permitted types instead of resolving type names dynamically.
+  secure_code: |
+    var handlers = new Dictionary<string, Func<IHandler>> { ["a"] = () => new AHandler() };
+    var h = handlers[Request["kind"]]();
+  technical_impact: Attacker loads and constructs unexpected types, reaching side-effecting constructors and gadget classes.
+  business_impact: Logic subversion and a stepping stone to deserialization or code-execution chains.
+
+- id: csharp-mass-assignment-tryupdatemodel
+  category: vuln
+  name: ASP.NET MVC Mass Assignment via TryUpdateModel
+  description: TryUpdateModel/UpdateModel called with a bare model and no property allowlist lets attackers overpost fields.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - TryUpdateModel
+  - UpdateModel
+  regex: (?:TryUpdateModel|UpdateModel)(?:<[^>]+>)?\(\s*[A-Za-z_][A-Za-z0-9_.]*\s*\)
+  cwe: CWE-915
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Pass an explicit includeProperties allowlist, or bind to a view model that omits sensitive fields.
+  secure_code: |
+    TryUpdateModel(user, "", new[] { "Name", "Email" });
+  technical_impact: An attacker sets protected properties (IsAdmin, Balance) simply by adding them to the request body.
+  business_impact: Privilege escalation and unauthorized modification of financial or role fields.
+
+- id: csharp-redos-user-input
+  category: vuln
+  name: .NET Regular Expression DoS from User Input
+  description: Building a Regex from user input (or matching with a user-supplied pattern) permits catastrophic backtracking DoS.
+  severity: medium
+  languages:
+  - csharp
+  keywords:
+  - new Regex
+  - Regex.Match
+  - Regex.IsMatch
+  regex: new\s+Regex\([^)]*Request|Regex\.(?:IsMatch|Match|Matches|Replace|Split)\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  cwe: CWE-1333
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Do not compile attacker-supplied patterns; set a MatchTimeout on every Regex operating on user data.
+  secure_code: |
+    var re = new Regex(fixedPattern, RegexOptions.None, TimeSpan.FromMilliseconds(200));
+  technical_impact: A malicious pattern or input triggers exponential backtracking, pinning a CPU core.
+  business_impact: Denial of service exhausting worker threads and taking the application offline.
+
+- id: xml-wcf-security-mode-none
+  category: vuln
+  name: WCF Binding Security Mode None
+  description: A WCF binding with <security mode="None"> disables both transport and message protection.
+  severity: high
+  languages:
+  - xml
+  keywords:
+  - <security
+  - mode="None"
+  regex: <security\s+mode\s*=\s*"None"
+  cwe: CWE-319
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Use security mode="Transport" or "Message" with an appropriate clientCredentialType for the binding.
+  secure_code: |
+    <security mode="Transport">
+      <transport clientCredentialType="Certificate" />
+    </security>
+  technical_impact: Service traffic is unauthenticated and unencrypted, exposing it to interception and tampering.
+  business_impact: Credential and data theft on the wire plus unauthenticated invocation of service operations.
+
+- id: xml-wcf-client-credential-none
+  category: vuln
+  name: WCF clientCredentialType None
+  description: clientCredentialType="None" on a WCF binding accepts callers without any authentication.
+  severity: high
+  languages:
+  - xml
+  keywords:
+  - clientCredentialType="None"
+  - clientCredentialType
+  regex: clientCredentialType\s*=\s*"None"
+  cwe: CWE-306
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Require a real credential type (Windows, Certificate, or UserName over Transport) for every exposed binding.
+  secure_code: |
+    <transport clientCredentialType="Windows" />
+  technical_impact: Any anonymous client can invoke the service contract, including privileged operations.
+  business_impact: Unauthenticated access to backend business functions and data.
+
+- id: xml-wcf-metadata-httpget
+  category: vuln
+  name: WCF Service Metadata Publishing Enabled
+  description: <serviceMetadata httpGetEnabled="true"> exposes the WSDL/MEX contract to anonymous callers.
+  severity: low
+  languages:
+  - xml
+  keywords:
+  - serviceMetadata
+  - httpGetEnabled="true"
+  regex: serviceMetadata[^>]*http[s]?GetEnabled\s*=\s*"true"
+  cwe: CWE-651
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable metadata publishing in production, or restrict the MEX endpoint to authenticated internal callers.
+  secure_code: |
+    <serviceMetadata httpGetEnabled="false" httpsGetEnabled="false" />
+  technical_impact: The full operation and message contract is enumerable via ?wsdl, mapping every callable method.
+  business_impact: Attack-surface disclosure that accelerates authorization and injection attacks on the service.
+
+- id: xml-wcf-servicedebug-exception-detail
+  category: vuln
+  name: WCF includeExceptionDetailInFaults Enabled
+  description: <serviceDebug includeExceptionDetailInFaults="true"> returns full server stack traces in SOAP faults.
+  severity: medium
+  languages:
+  - xml
+  keywords:
+  - includeExceptionDetailInFaults="true"
+  - includeExceptionDetailInFaults
+  regex: includeExceptionDetailInFaults\s*=\s*"true"
+  cwe: CWE-209
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set includeExceptionDetailInFaults="false" in production and return generic FaultException messages.
+  secure_code: |
+    <serviceDebug includeExceptionDetailInFaults="false" />
+  technical_impact: SOAP faults carry internal type names, file paths, and exception chains to remote callers.
+  business_impact: Sensitive implementation detail disclosure aiding follow-on exploitation.
+
+- id: web-xss-response-write-request
+  category: vuln
+  name: WebForms Reflected XSS via Response.Write
+  description: Response.Write emitting Request input without encoding produces reflected cross-site scripting.
+  severity: high
+  languages:
+  - csharp
+  keywords:
+  - Response.Write
+  - Request
+  regex: Response\.Write\([^)]*Request
+  context_required:
+  - Request
+  - Request.QueryString
+  - Request.Form
+  - Request.Params
+  allowlist:
+    regex:
+    - HttpUtility\.HtmlEncode\(
+    - Server\.HtmlEncode\(
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: HTML-encode all user input before writing it, using HttpUtility.HtmlEncode or an auto-encoding control.
+  secure_code: |
+    Response.Write(HttpUtility.HtmlEncode(Request["q"]));
+  technical_impact: Attacker-supplied markup is reflected into the page and executes in the victim browser.
+  business_impact: Session hijacking, credential theft, and account takeover via XSS.
+
+- id: web-xss-htmlstring-bypass
+  category: vuln
+  name: Razor Output Encoding Bypass via HtmlString
+  description: new HtmlString or MvcHtmlString.Create wraps user input as pre-encoded, bypassing Razor auto-encoding.
+  severity: high
+  languages:
+  - csharp
+  - html
+  keywords:
+  - new HtmlString
+  - MvcHtmlString.Create
+  - HtmlString
+  regex: new\s+HtmlString\([^)]*(?:Request|Model|ViewBag|ViewData|\+)|MvcHtmlString\.Create\([^)]*(?:Request|Model|ViewBag|ViewData|\+)
+  context_required:
+  - Request
+  - Model
+  - ViewBag
+  - ViewData
+  - +
+  allowlist:
+    regex:
+    - HttpUtility\.HtmlEncode\(
+    - AntiXss
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Render the value with plain @model so Razor encodes it; only wrap sanitized, trusted HTML.
+  secure_code: |
+    @Model.Bio
+    @Html.Raw(_sanitizer.Sanitize(Model.Bio))
+  technical_impact: The wrapped user string is emitted as raw HTML, executing injected scripts in the browser.
+  business_impact: Stored or reflected XSS driving session theft and account compromise.
+
+- id: java-xxe-xml-parser-parse
+  category: vuln
+  name: Java XXE via DOM/SAX Parser
+  description: Request-derived XML parsed by DocumentBuilder/SAXParser/XMLReader/SAXReader without secure processing.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - DocumentBuilder
+  - SAXParser
+  - XMLReader
+  - SAXReader
+  - SAXBuilder
+  - .parse(
+  - .read(
+  - .build(
+  regex: (?:\.parse|\.read|\.build)\s*\(
+  context_required:
+  - getParameter
+  - getInputStream
+  - getReader
+  - getPart
+  - request
+  - '@RequestBody'
+  - '@RequestParam'
+  allowlist:
+    regex:
+    - disallow-doctype-decl
+    - FEATURE_SECURE_PROCESSING
+    - setExpandEntityReferences\s*\(\s*false
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Call setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) before parsing.
+  secure_code: |
+    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+    dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+  technical_impact: External-entity local file read, SSRF, and blind OOB exfiltration.
+  business_impact: Disclosure of config secrets, cloud IAM credentials, and internal network reach.
+
+- id: java-xxe-xmlinputfactory-create
+  category: vuln
+  name: Java XXE via XMLInputFactory (StAX)
+  description: StAX reader created over request input without disabling IS_SUPPORTING_EXTERNAL_ENTITIES.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - XMLInputFactory
+  - createXMLStreamReader
+  - createXMLEventReader
+  regex: createXML(?:Stream|Event)Reader\s*\(
+  context_required:
+  - getParameter
+  - getInputStream
+  - getReader
+  - request
+  - '@RequestBody'
+  allowlist:
+    regex:
+    - IS_SUPPORTING_EXTERNAL_ENTITIES.{0,20}false
+    - SUPPORT_DTD.{0,20}false
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Set IS_SUPPORTING_EXTERNAL_ENTITIES=false and SUPPORT_DTD=false on the factory.
+  secure_code: |
+    XMLInputFactory f = XMLInputFactory.newFactory();
+    f.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+  technical_impact: External-entity file read and blind OOB exfiltration via StAX parsing.
+  business_impact: Leakage of secrets and internal-service access from a single XML message.
+
+- id: java-xxe-unmarshaller-unmarshal
+  category: vuln
+  name: Java XXE via JAXB Unmarshaller
+  description: JAXB Unmarshaller.unmarshal on request XML without a hardened SAXSource.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - Unmarshaller
+  - JAXB
+  - .unmarshal(
+  regex: \.unmarshal\s*\(
+  context_required:
+  - getParameter
+  - getInputStream
+  - getReader
+  - request
+  - '@RequestBody'
+  - StreamSource
+  allowlist:
+    regex:
+    - disallow-doctype-decl
+    - setFeature
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Wrap the input in a SAXSource whose XMLReader has DOCTYPE declarations disallowed.
+  secure_code: |
+    spf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+    Source src = new SAXSource(spf.newSAXParser().getXMLReader(), new InputSource(in));
+  technical_impact: External-entity file read and SSRF while binding XML to Java objects.
+  business_impact: Exposure of production secrets and internal endpoints via SSO/SOAP bodies.
+
+- id: java-xxe-set-expand-entity-references
+  category: vuln
+  name: Java XXE Entity Expansion Explicitly Enabled
+  description: setExpandEntityReferences(true) forces the parser to resolve external entities.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - setExpandEntityReferences
+  regex: setExpandEntityReferences\s*\(\s*true\s*\)
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Remove the call or pass false, and disallow DOCTYPE declarations entirely.
+  secure_code: |
+    dbf.setExpandEntityReferences(false);
+    dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+  technical_impact: Guarantees external-entity resolution, enabling file read and SSRF.
+  business_impact: Direct data-exfiltration path from any XML-consuming endpoint.
+
+- id: java-path-traversal-new-file
+  category: vuln
+  name: Java Path Traversal via File Constructor
+  description: Request input concatenated into new File/FileInputStream/FileReader path.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - new File(
+  - new FileInputStream(
+  - new FileReader(
+  regex: new\s+(?:File|FileInputStream|FileReader)\s*\(
+  context_required:
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@PathVariable'
+  - request.
+  - +
+  allowlist:
+    regex:
+    - getCanonicalPath
+    - \.normalize\(\)
+    - startsWith\(
+  cwe: CWE-22
+  owasp: A01:2021 Broken Access Control
+  remediation: Resolve against a fixed base dir, canonicalize, and verify the result stays inside it.
+  secure_code: |
+    Path base = Paths.get("/srv/uploads").toRealPath();
+    Path p = base.resolve(name).normalize();
+    if (!p.startsWith(base)) throw new SecurityException();
+  technical_impact: Arbitrary file read/write outside the intended directory (../../etc/passwd).
+  business_impact: Disclosure of credentials/source and potential webshell write to RCE.
+
+- id: java-path-traversal-paths-get
+  category: vuln
+  name: Java Path Traversal via NIO Paths/Files
+  description: Request input flows into Paths.get or Files.newInputStream/readAllBytes without normalization.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - Paths.get(
+  - Files.newInputStream
+  - Files.readAllBytes
+  - Files.lines
+  regex: (?:Paths\.get|Files\.newInputStream|Files\.readAllBytes|Files\.lines)\s*\(
+  context_required:
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@PathVariable'
+  - request.
+  - +
+  allowlist:
+    regex:
+    - \.normalize\(\)
+    - startsWith\(
+    - getCanonicalPath
+  cwe: CWE-22
+  owasp: A01:2021 Broken Access Control
+  remediation: Normalize the resolved path and confirm it is still under the allowed base directory.
+  secure_code: |
+    Path p = base.resolve(userName).normalize();
+    if (!p.startsWith(base)) throw new SecurityException();
+  technical_impact: Reads or writes arbitrary filesystem paths chosen by the attacker.
+  business_impact: Secret/source disclosure escalating to code execution.
+
+- id: java-ssrf-url-openconnection
+  category: vuln
+  name: Java SSRF via URL.openConnection
+  description: Request-controlled URL opened with openConnection/openStream reaches internal hosts.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - new URL(
+  - openConnection
+  - openStream
+  regex: new\s+URL\s*\(
+  context_required:
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@RequestBody'
+  - request.
+  - +
+  allowlist:
+    regex:
+    - allowlist
+    - ALLOWED_HOSTS
+    - isValidHost
+  cwe: CWE-918
+  owasp: A10:2021 Server-Side Request Forgery
+  remediation: Validate the host against an allowlist and block link-local/internal ranges before fetching.
+  secure_code: |
+    if (!ALLOWED_HOSTS.contains(new URL(u).getHost())) throw new SecurityException();
+  technical_impact: Server fetches attacker-chosen URLs, reaching cloud metadata and internal services.
+  business_impact: Cloud IAM credential theft and internal admin access via 169.254.169.254.
+
+- id: java-ssrf-resttemplate-webclient
+  category: vuln
+  name: Java SSRF via HTTP Client (RestTemplate/WebClient/OkHttp)
+  description: Request-derived URL passed to a Spring/OkHttp HTTP client method.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - getForObject
+  - getForEntity
+  - postForObject
+  - exchange(
+  - newCall(
+  regex: \.(?:getForObject|getForEntity|postForObject|postForEntity|exchange|newCall)\s*\(
+  context_required:
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@RequestBody'
+  - request.
+  - +
+  allowlist:
+    regex:
+    - ALLOWED_HOSTS
+    - isValidHost
+    - allowlist
+  cwe: CWE-918
+  owasp: A10:2021 Server-Side Request Forgery
+  remediation: Restrict the outbound host to a validated allowlist; never pass raw user URLs.
+  secure_code: |
+    URI uri = validateAndBuild(userUrl);
+    restTemplate.getForObject(uri, String.class);
+  technical_impact: Outbound requests to internal/metadata endpoints of the attacker's choosing.
+  business_impact: Internal service compromise and cloud credential exfiltration.
+
+- id: java-ldap-injection-search-filter
+  category: vuln
+  name: Java LDAP Injection via DirContext.search
+  description: Request input concatenated into an LDAP search filter passed to DirContext.search.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - DirContext
+  - InitialDirContext
+  - .search(
+  - SearchControls
+  regex: \.search\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - String.format
+  - concat
+  allowlist:
+    regex:
+    - encodeFilter
+    - escapeLDAP
+    - Encode\.forLdap
+  cwe: CWE-90
+  owasp: A03:2021 Injection
+  remediation: Escape RFC 4515 metacharacters (encodeForLDAP) or use parameterized filter templates.
+  secure_code: |
+    String filter = "(uid=" + Encode.forLdap(user) + ")";
+    ctx.search(base, filter, controls);
+  technical_impact: Filter-logic manipulation enabling auth bypass and attribute exfiltration.
+  business_impact: Directory authentication bypass and leak of credentials/PII from the store.
+
+- id: java-xpath-injection-concat
+  category: vuln
+  name: Java XPath Injection
+  description: Request input concatenated into an XPath expression compiled/evaluated by javax.xml.xpath.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - XPath
+  - XPathExpression
+  - .compile(
+  - .evaluate(
+  regex: \.(?:compile|evaluate)\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - String.format
+  - concat
+  allowlist:
+    regex:
+    - setXPathVariableResolver
+    - XPathVariableResolver
+  cwe: CWE-643
+  owasp: A03:2021 Injection
+  remediation: Bind values with an XPathVariableResolver instead of string concatenation.
+  secure_code: |
+    xpath.setXPathVariableResolver(v -> "$user".equals(v.getLocalPart()) ? user : null);
+    xpath.compile("//user[name=$user]");
+  technical_impact: Predicate tampering enabling auth bypass and full XML node dumping.
+  business_impact: Credential/PII disclosure from XML-backed authentication stores.
+
+- id: java-ognl-mvel-injection
+  category: vuln
+  name: Java Expression Injection (OGNL/MVEL)
+  description: Request input evaluated by OGNL or MVEL expression engines leading to RCE.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - Ognl.
+  - MVEL.
+  regex: (?:Ognl\.(?:getValue|setValue|parseExpression)|MVEL\.(?:eval|evalToString|executeExpression|compileExpression))\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@RequestBody'
+  - request.
+  cwe: CWE-917
+  owasp: A03:2021 Injection
+  remediation: Never evaluate user input as an expression; use a fixed allowlisted dispatch map.
+  secure_code: |
+    Object result = ALLOWED_OPS.getOrDefault(op, () -> null).get();
+  technical_impact: Arbitrary Java execution via T(java.lang.Runtime).getRuntime().exec.
+  business_impact: Full server compromise from a single request field (Struts/OGNL class).
+
+- id: java-jexl-el-injection
+  category: vuln
+  name: Java Expression Injection (JEXL/EL)
+  description: Request input compiled into a JEXL or Jakarta EL expression and evaluated.
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - JexlEngine
+  - createExpression
+  - createScript
+  - ELProcessor
+  - getExpressionFactory
+  regex: (?:createExpression|createScript|\.eval|createValueExpression)\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@RequestBody'
+  - request.
+  cwe: CWE-917
+  owasp: A03:2021 Injection
+  remediation: Do not build expressions from user input; parse to a safe, sandboxed grammar.
+  secure_code: |
+    ELProcessor elp = new ELProcessor();
+    elp.eval("2 + 2");
+  technical_impact: Arbitrary method invocation and command execution via the expression engine.
+  business_impact: RCE reaching environment variables, cloud metadata, and internal services.
+
+- id: java-jndi-lookup-injection
+  category: vuln
+  name: Java JNDI Injection via Context.lookup
+  description: Request-controlled name passed to InitialContext.lookup enabling remote class load (Log4Shell family).
+  severity: critical
+  languages:
+  - java
+  keywords:
+  - InitialContext
+  - InitialDirContext
+  - .lookup(
+  regex: \.lookup\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@RequestBody'
+  - request.
+  cwe: CWE-917
+  owasp: A03:2021 Injection
+  remediation: Never look up attacker-controlled names; restrict to a static, validated set.
+  secure_code: |
+    if (!ALLOWED_JNDI.contains(name)) throw new SecurityException();
+    ctx.lookup(name);
+  technical_impact: Remote object/class load over LDAP/RMI leading to RCE on the JVM.
+  business_impact: Full application-server takeover from an injected ${jndi:...} value.
+
+- id: java-reflection-class-forname
+  category: vuln
+  name: Java Unsafe Reflection via Class.forName
+  description: Request input drives Class.forName, letting an attacker load/instantiate arbitrary classes.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - Class.forName(
+  regex: Class\.forName\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - '@RequestBody'
+  - request.
+  allowlist:
+    regex:
+    - ALLOWED_CLASSES
+    - allowlist
+  cwe: CWE-470
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Map user input to a fixed allowlist of permitted class names.
+  secure_code: |
+    Class<?> c = ALLOWED_CLASSES.get(name);
+    if (c == null) throw new SecurityException();
+  technical_impact: Loading gadget/side-effecting classes, escalating to deserialization RCE.
+  business_impact: Arbitrary code paths triggered from user input, risking server compromise.
+
+- id: java-request-dispatcher-include
+  category: vuln
+  name: Java LFI/SSRF via RequestDispatcher Path
+  description: Request input builds the RequestDispatcher path for include/forward, exposing internal resources.
+  severity: medium
+  languages:
+  - java
+  keywords:
+  - getRequestDispatcher(
+  regex: getRequestDispatcher\s*\(
+  context_required:
+  - +
+  - getParameter
+  - getHeader
+  - '@RequestParam'
+  - request.getParameter
+  allowlist:
+    regex:
+    - ALLOWED_VIEWS
+    - allowlist
+  cwe: CWE-98
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Dispatch only to a fixed allowlist of view names; never concatenate user input.
+  secure_code: |
+    String view = ALLOWED_VIEWS.get(name);
+    request.getRequestDispatcher(view).include(request, response);
+  technical_impact: Inclusion of WEB-INF resources or internal servlets bypassing access control.
+  business_impact: Disclosure of protected config/JSP and internal endpoint access.
+
+- id: java-log4shell-logged-request
+  category: vuln
+  name: Java Log Injection of Untrusted Request Data (Log4Shell exposure)
+  description: Untrusted request value logged directly, enabling ${jndi:} interpolation on vulnerable Log4j.
+  severity: high
+  languages:
+  - java
+  keywords:
+  - logger.
+  - log.
+  - LOG.
+  - LOGGER.
+  regex: (?:logger|log|LOG|LOGGER)\.(?:info|warn|error|debug|trace|fatal)\s*\(
+  context_required:
+  - getHeader
+  - getParameter
+  - getRemoteUser
+  - getQueryString
+  - '@RequestHeader'
+  - '${jndi:'
+  cwe: CWE-117
+  owasp: A03:2021 Injection
+  remediation: Upgrade Log4j and disable message-lookups; never log raw request headers/params.
+  secure_code: |
+    logger.info("login attempt user={}", sanitize(userId));
+  technical_impact: JNDI lookup interpolation in log messages yielding remote class load and RCE.
+  business_impact: Full server compromise via a crafted User-Agent or header (CVE-2021-44228).
+
+- id: jsp-xss-scriptlet-request
+  category: vuln
+  name: JSP Reflected XSS via Scriptlet Expression
+  description: request.getParameter/getHeader echoed unescaped inside a JSP expression tag.
+  severity: high
+  languages:
+  - java
+  - html
+  keywords:
+  - <%=
+  - request.getParameter
+  - request.getHeader
+  regex: <%=[^%]*request\.get(?:Parameter|Header)\s*\(
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Output via JSTL <c:out> or fn:escapeXml so HTML metacharacters are encoded.
+  secure_code: |
+    <c:out value="${param.name}"/>
+  technical_impact: Attacker HTML/JS reflected into the page and executed in the victim browser.
+  business_impact: Session theft, account takeover, and defacement of authenticated pages.
+
+- id: jsp-xss-el-param-reflected
+  category: vuln
+  name: JSP Reflected XSS via Unescaped EL param
+  description: Request parameter/header rendered through ${param.*} in template markup without escaping.
+  severity: medium
+  languages:
+  - java
+  - html
+  keywords:
+  - ${param
+  - ${paramValues
+  - ${header
+  regex: \$\{\s*(?:param|paramValues|header)\b[^}]*\}
+  allowlist:
+    regex:
+    - fn:escapeXml
+    - escapeXml\s*=\s*"true"
+    - <c:out
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Wrap the value in <c:out> or apply fn:escapeXml before rendering.
+  secure_code: |
+    <c:out value="${param.q}"/>
+  technical_impact: Reflected script execution because JSP EL does not auto-escape output.
+  business_impact: Cookie/session theft and phishing on trusted application pages.
+
+- id: jsp-lfi-ssrf-dynamic-include
+  category: vuln
+  name: JSP Dynamic Include LFI/SSRF
+  description: jsp:include/c:import/include-directive target built from request input.
+  severity: high
+  languages:
+  - java
+  - html
+  keywords:
+  - <jsp:include
+  - <c:import
+  - include file=
+  regex: <(?:jsp:include[^>]*page|c:import[^>]*url|%@\s*include[^>]*file)\s*=\s*"(?:<%=|\$\{)
+  cwe: CWE-98
+  owasp: A03:2021 Injection
+  remediation: Include only fixed, allowlisted paths; never derive the target from user input.
+  secure_code: |
+    <jsp:include page="/WEB-INF/views/home.jsp"/>
+  technical_impact: Inclusion of arbitrary local resources or remote URLs (c:import SSRF).
+  business_impact: Disclosure of WEB-INF secrets and server-side request forgery to internal hosts.
+
+- id: jsp-cout-escapexml-false
+  category: vuln
+  name: JSP XSS via c:out escapeXml=false
+  description: JSTL c:out explicitly disables HTML escaping, rendering tainted values raw.
+  severity: medium
+  languages:
+  - java
+  - html
+  keywords:
+  - escapeXml
+  regex: <c:out\b[^>]*escapeXml\s*=\s*"false"
+  cwe: CWE-79
+  owasp: A03:2021 Injection
+  remediation: Remove escapeXml="false" (default true) so output is HTML-encoded.
+  secure_code: |
+    <c:out value="${bean.description}"/>
+  technical_impact: Any tainted value passed through this tag executes as HTML/JavaScript.
+  business_impact: Stored/reflected XSS leading to session theft on trusted pages.
+
+- id: jsp-rce-scriptlet-runtime
+  category: vuln
+  name: JSP OS Command Injection in Scriptlet
+  description: JSP scriptlet invokes Runtime.exec/ProcessBuilder on request input.
+  severity: critical
+  languages:
+  - java
+  - html
+  keywords:
+  - Runtime.getRuntime
+  - ProcessBuilder
+  regex: <%[^%]*(?:Runtime\.getRuntime\(\)\.exec|new\s+ProcessBuilder)\s*\(
+  context_required:
+  - request.getParameter
+  - request.getHeader
+  - <%=
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Remove shell execution from views; call vetted server code with an argv array and validation.
+  secure_code: |
+    <%-- no exec in views; delegate to a validated service layer --%>
+  technical_impact: Arbitrary OS command execution as the servlet-container user.
+  business_impact: Full application-server compromise and source/secret exfiltration.
+
+- id: kotlin-command-injection-exec
+  category: vuln
+  name: Kotlin OS Command Injection
+  description: Request/intent input reaches Runtime.exec or ProcessBuilder, often via string interpolation.
+  severity: critical
+  languages:
+  - kotlin
+  keywords:
+  - Runtime.getRuntime
+  - ProcessBuilder
+  - .exec(
+  regex: (?:Runtime\.getRuntime\(\)\.exec|ProcessBuilder)\s*\(
+  context_required:
+  - $
+  - call.parameters
+  - call.receive
+  - getIntent
+  - getStringExtra
+  - request
+  - +
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Pass a fixed argv list with validated arguments; never build a shell string from input.
+  secure_code: |
+    ProcessBuilder(listOf("convert", validated(file), "out.png")).start()
+  technical_impact: Arbitrary OS command execution in the server or app process.
+  business_impact: Server takeover (Ktor) or device compromise (Android) via a single tainted value.
+
+- id: kotlin-sql-injection-interpolation
+  category: vuln
+  name: Kotlin SQL Injection via String Interpolation
+  description: Raw SQL string with $-interpolation passed to exec/executeQuery (Exposed/JDBC).
+  severity: critical
+  languages:
+  - kotlin
+  keywords:
+  - exec(
+  - executeQuery(
+  - executeUpdate(
+  - Statement
+  regex: (?:exec|executeQuery|executeUpdate)\s*\(\s*"[^"]*\$
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use parameterized statements or Exposed DSL bindings; never interpolate into SQL.
+  secure_code: |
+    connection.prepareStatement("SELECT * FROM u WHERE id = ?").apply { setInt(1, id) }
+  technical_impact: Arbitrary SQL read/write against the mapped database.
+  business_impact: Full data breach and, on Postgres, COPY FROM PROGRAM RCE.
+
+- id: kotlin-ssrf-url-readtext
+  category: vuln
+  name: Kotlin SSRF via URL Fetch
+  description: Request/intent-controlled URL opened with readText/openConnection/openStream.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - URL(
+  - readText
+  - openConnection
+  - openStream
+  regex: URL\s*\([^)]*\)\.(?:readText|openConnection|openStream)\s*\(
+  context_required:
+  - $
+  - call.parameters
+  - call.receive
+  - getStringExtra
+  - getQueryParameter
+  - request
+  - intent
+  allowlist:
+    regex:
+    - ALLOWED_HOSTS
+    - isValidHost
+    - allowlist
+  cwe: CWE-918
+  owasp: A10:2021 Server-Side Request Forgery
+  remediation: Validate the host against an allowlist and block internal/link-local ranges.
+  secure_code: |
+    require(host in ALLOWED_HOSTS)
+    URL(userUrl).readText()
+  technical_impact: Server fetches attacker-chosen URLs, reaching metadata and internal services.
+  business_impact: Cloud credential theft and internal-network access via SSRF.
+
+- id: kotlin-tls-trust-hostname-disabled
+  category: vuln
+  name: Kotlin TLS Validation Disabled
+  description: Empty checkServerTrusted or a HostnameVerifier that always returns true disables TLS checks.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - HostnameVerifier
+  - checkServerTrusted
+  - X509TrustManager
+  regex: HostnameVerifier\s*\{[^}]*->\s*true|checkServerTrusted\s*\([^)]*\)\s*\{\s*\}
+  cwe: CWE-295
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Use the platform default trust manager and hostname verifier; never trust-all.
+  secure_code: |
+    val client = OkHttpClient.Builder().build()
+  technical_impact: Accepts any certificate, enabling active man-in-the-middle interception.
+  business_impact: Credential and session interception over hostile networks.
+
+- id: kotlin-hardcoded-secret
+  category: vuln
+  name: Kotlin Hardcoded Secret
+  description: API key, token, password, or secret assigned a string literal in Kotlin source.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - password
+  - secret
+  - token
+  - apiKey
+  - API_KEY
+  regex: (?:val|var|const val)\s+\w*(?:[Pp]assword|[Ss]ecret|[Tt]oken|[Aa]pi[Kk]ey|API_KEY|PASSWORD|SECRET|TOKEN)\w*\s*=\s*"[^"]{6,}"
+  allowlist:
+    regex:
+    - System\.getenv
+    - BuildConfig\.
+    - getProperty
+    - \$\{
+  cwe: CWE-798
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Load secrets from environment/keystore at runtime; keep them out of source and VCS.
+  secure_code: |
+    val apiKey = System.getenv("API_KEY") ?: error("missing key")
+  technical_impact: Embedded credential is recoverable from the binary/repository and reusable.
+  business_impact: Third-party account abuse and lateral movement using the leaked secret.
+
+- id: kotlin-android-webview-javascript-interface
+  category: vuln
+  name: Android WebView addJavascriptInterface Exposure
+  description: addJavascriptInterface exposes native methods to page JavaScript, risking RCE from loaded content.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - addJavascriptInterface
+  regex: \.addJavascriptInterface\s*\(
+  cwe: CWE-749
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Avoid the bridge; if required, gate methods with @JavascriptInterface and load only trusted content.
+  secure_code: |
+    // prefer WebMessageListener with a fixed allowlisted origin
+  technical_impact: Malicious page JS invokes native methods, reaching the app's permissions.
+  business_impact: Device/app compromise and theft of user data via a hostile web page.
+
+- id: kotlin-android-webview-file-access
+  category: vuln
+  name: Android WebView Unsafe File Access Enabled
+  description: allowFileAccess/allowUniversalAccessFromFileURLs enabled, exposing local files to loaded content.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - allowFileAccess
+  - allowUniversalAccessFromFileURLs
+  - AllowFileAccessFromFileURLs
+  regex: (?:setAllowFileAccess|allowFileAccess|setAllowUniversalAccessFromFileURLs|allowUniversalAccessFromFileURLs|setAllowFileAccessFromFileURLs|allowFileAccessFromFileURLs)\s*(?:\(\s*true\s*\)|=\s*true)
+  cwe: CWE-200
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable file access flags; serve local assets via WebViewAssetLoader instead.
+  secure_code: |
+    settings.allowFileAccess = false
+    settings.allowUniversalAccessFromFileURLs = false
+  technical_impact: file:// content reads app-private files and cross-origins to remote data.
+  business_impact: Exfiltration of tokens and PII from app-private storage.
+
+- id: kotlin-android-webview-loadurl-taint
+  category: vuln
+  name: Android WebView loadUrl With Untrusted Input
+  description: WebView.loadUrl receives an intent/deep-link controlled URL enabling redirection or file access.
+  severity: medium
+  languages:
+  - kotlin
+  keywords:
+  - loadUrl(
+  regex: \.loadUrl\s*\(
+  context_required:
+  - $
+  - getStringExtra
+  - getIntent
+  - intent.
+  - getQueryParameter
+  - extras
+  allowlist:
+    regex:
+    - startsWith\("https://
+    - ALLOWED_HOSTS
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Validate the URL scheme/host against an allowlist before loading.
+  secure_code: |
+    if (uri.scheme == "https" && uri.host in ALLOWED_HOSTS) web.loadUrl(uri.toString())
+  technical_impact: Loads attacker URLs (javascript:/file:) into a privileged WebView context.
+  business_impact: Phishing, local-file theft, and JS bridge abuse from crafted deep links.
+
+- id: kotlin-android-world-readable-mode
+  category: vuln
+  name: Android World-Readable/Writable File Mode
+  description: MODE_WORLD_READABLE/WRITEABLE shares app files with every other app on the device.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - MODE_WORLD_READABLE
+  - MODE_WORLD_WRITEABLE
+  regex: (?:MODE_WORLD_READABLE|MODE_WORLD_WRITEABLE)
+  cwe: CWE-732
+  owasp: A01:2021 Broken Access Control
+  remediation: Use MODE_PRIVATE and share via a FileProvider with granted URI permissions.
+  secure_code: |
+    getSharedPreferences("p", Context.MODE_PRIVATE)
+  technical_impact: Any installed app reads or tampers with the app's private files/prefs.
+  business_impact: Cross-app theft of credentials and user data.
+
+- id: kotlin-android-sqlite-rawquery-interpolation
+  category: vuln
+  name: Android SQLite Injection via rawQuery/execSQL
+  description: SQL string with $-interpolation passed to rawQuery/execSQL.
+  severity: high
+  languages:
+  - kotlin
+  keywords:
+  - rawQuery(
+  - execSQL(
+  regex: (?:rawQuery|execSQL)\s*\(\s*"[^"]*\$
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use selectionArgs/bind placeholders (?) instead of interpolating into the SQL.
+  secure_code: |
+    db.rawQuery("SELECT * FROM notes WHERE owner = ?", arrayOf(userId))
+  technical_impact: Injection into the local database, bypassing per-user row scoping.
+  business_impact: Local privilege/data-isolation bypass exposing other users' records.
+
+- id: kotlin-android-exported-intent-redirect
+  category: vuln
+  name: Android Intent Redirection via Untrusted Extra
+  description: startActivity launches an Intent taken from an incoming getIntent extra (intent redirection).
+  severity: medium
+  languages:
+  - kotlin
+  keywords:
+  - startActivity(
+  regex: startActivity(?:ForResult)?\s*\(
+  context_required:
+  - getParcelableExtra
+  - getStringExtra
+  - Intent.parseUri
+  - intent.extras
+  - getIntent
+  cwe: CWE-926
+  owasp: A01:2021 Broken Access Control
+  remediation: Never forward a nested Intent from an extra; validate target component/action against an allowlist.
+  secure_code: |
+    val target = Intent(this, KnownActivity::class.java)
+    startActivity(target)
+  technical_impact: Attacker app redirects the exported component to launch privileged internal activities.
+  business_impact: Access-control bypass and abuse of the app's permissions by a malicious app.
+
+- id: php-ssrf-request-input
+  category: vuln
+  name: PHP Server-Side Request Forgery
+  description: Network client sink (curl/get_headers/fsockopen) fed a request superglobal.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - curl_init
+  - curl_setopt
+  - get_headers
+  - fsockopen
+  - stream_socket_client
+  regex: (?:curl_init|get_headers|fsockopen|pfsockopen|stream_socket_client)\s*\(|curl_setopt\s*\([^)]*CURLOPT_URL
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  allowlist:
+    regex:
+    - FILTER_VALIDATE_URL
+    - in_array
+  cwe: CWE-918
+  owasp: A10:2021 Server-Side Request Forgery
+  remediation: Allowlist scheme and host; block internal/link-local and 169.254.169.254.
+  secure_code: |
+    $host = parse_url($_GET['url'], PHP_URL_HOST);
+    if (!in_array($host, $ALLOWED, true)) { http_response_code(400); exit; }
+  technical_impact: Reaches internal services and cloud metadata for credential theft.
+  business_impact: Cloud account takeover via stolen instance credentials.
+
+- id: php-path-traversal-fileread
+  category: vuln
+  name: PHP Path Traversal via File-Read Function
+  description: readfile/file_get_contents/fopen given a request-controlled path.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - readfile
+  - file_get_contents
+  - fopen
+  - fpassthru
+  - highlight_file
+  regex: (?:readfile|file_get_contents|fopen|fpassthru|show_source|highlight_file|file)\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - ..
+  allowlist:
+    regex:
+    - basename\(
+    - realpath\(
+    - str_replace
+  cwe: CWE-22
+  owasp: A01:2021 Broken Access Control
+  remediation: Resolve with realpath and confirm the result stays under an allowed base dir.
+  secure_code: |
+    $real = realpath($base . '/' . basename($_GET['file']));
+    if ($real === false || strpos($real, $base) !== 0) { http_response_code(403); exit; }
+  technical_impact: Reads /etc/passwd, .env, and application config off the server.
+  business_impact: Disclosure of secrets and source enabling deeper compromise.
+
+- id: php-type-juggling-loose-compare
+  category: vuln
+  name: PHP Type Juggling on Secret Comparison
+  description: Loose == / != on hashes, strcmp results, or secret fields (magic-hash bypass).
+  severity: high
+  languages:
+  - php
+  keywords:
+  - strcmp
+  - md5
+  - sha1
+  - ==
+  - in_array
+  regex: (?:strcmp|strcasecmp|md5|sha1|crc32|hash|password_hash|hash_hmac)\s*\([^)]*\)\s*(?:==|!=)(?!=)|(?:==|!=)(?!=)\s*(?:md5|sha1|crc32|hash)\s*\(|\$_(?:GET|POST|REQUEST|COOKIE)\[[^\]]*(?:pass|token|hash|otp|sig|secret|key)[^\]]*\]\s*(?:==|!=)(?!=)
+  allowlist:
+    regex:
+    - hash_equals
+    - ===
+    - password_verify
+  cwe: CWE-697
+  owasp: A07:2021 Identification and Authentication Failures
+  remediation: Use hash_equals()/password_verify() and strict === comparisons only.
+  secure_code: |
+    if (hash_equals($stored, hash_hmac('sha256', $_POST['token'], $key))) { /* ok */ }
+  technical_impact: Auth or signature bypass when 0e-prefixed hashes compare equal.
+  business_impact: Account takeover and forged-token acceptance.
+
+- id: php-preg-replace-eval-modifier
+  category: vuln
+  name: PHP preg_replace /e Code Execution
+  description: preg_replace pattern carries the /e modifier, evaluating the replacement as PHP.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - preg_replace
+  regex: preg_replace\s*\(\s*["\x27][^"\x27\n]*/[a-zA-Z]*e[a-zA-Z]*["\x27]
+  allowlist:
+    regex:
+    - preg_replace_callback
+  cwe: CWE-95
+  owasp: A03:2021 Injection
+  remediation: Remove the /e modifier; use preg_replace_callback with an explicit function.
+  secure_code: |
+    preg_replace_callback('/(\w+)/', fn($m) => strtoupper($m[1]), $input);
+  technical_impact: Arbitrary PHP execution via the replacement expression.
+  business_impact: Full server compromise and remote code execution.
+
+- id: php-extract-variable-overwrite
+  category: vuln
+  name: PHP extract() Variable Overwrite
+  description: extract() applied to a request superglobal overwrites arbitrary local variables.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - extract(
+  regex: extract\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE|SERVER)
+  allowlist:
+    regex:
+    - EXTR_SKIP
+    - EXTR_PREFIX_ALL
+  cwe: CWE-621
+  owasp: A03:2021 Injection
+  remediation: Never extract() untrusted input; read named keys explicitly.
+  secure_code: |
+    $name = $_POST['name'] ?? '';
+  technical_impact: Overwrites $authenticated/$is_admin style flags to bypass logic.
+  business_impact: Privilege escalation and authentication bypass.
+
+- id: php-mail-header-injection
+  category: vuln
+  name: PHP mail() Header / Parameter Injection
+  description: Request input flows into mail() headers or the additional_parameters argument.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - mail(
+  regex: mail\s*\([^;]*\$_(?:GET|POST|REQUEST|COOKIE)
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  allowlist:
+    regex:
+    - FILTER_VALIDATE_EMAIL
+    - escapeshellarg
+  cwe: CWE-93
+  owasp: A03:2021 Injection
+  remediation: Validate the address, strip CR/LF from headers, and escapeshellarg the 5th arg.
+  secure_code: |
+    $to = filter_var($_POST['email'], FILTER_VALIDATE_EMAIL);
+    if ($to) { mail($to, $subject, $body); }
+  technical_impact: Injects extra recipients/headers or sendmail -X args (log poisoning to RCE).
+  business_impact: Mail relay abuse, spoofed mail, and potential server compromise.
+
+- id: php-phar-deserialization
+  category: vuln
+  name: PHP Phar Deserialization
+  description: phar:// stream or Phar object triggers unserialize of attacker metadata.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - phar://
+  - PharData
+  - new Phar
+  - 'Phar::'
+  regex: phar://|new\s+Phar(?:Data)?\s*\(|Phar::(?:mount|loadPhar|mapPhar)
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Never pass user paths to filesystem funcs as phar://; validate upload contents.
+  secure_code: |
+    $data = json_decode(file_get_contents($safePath), true);
+  technical_impact: Object-injection gadget chains from crafted Phar metadata reach RCE.
+  business_impact: Remote code execution from an uploaded archive.
+
+- id: php-rfi-allow-url-include
+  category: vuln
+  name: PHP Remote File Inclusion
+  description: allow_url_include enabled or include/require of an http:// URL.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - allow_url_include
+  - include
+  - require
+  regex: allow_url_include["\x27]?\s*(?:,|=>|=)\s*["\x27]?(?:1\b|[Oo][Nn]\b|[Tt]rue\b)|(?:include|require)(?:_once)?\s*\(\s*[`"\x27]https?://
+  cwe: CWE-98
+  owasp: A03:2021 Injection
+  remediation: Keep allow_url_include Off; include only local allowlisted paths.
+  secure_code: |
+    $page = basename($_GET['page']);
+    include __DIR__ . '/pages/' . $page . '.php';
+  technical_impact: Loads and executes attacker-hosted PHP from a remote URL.
+  business_impact: Immediate remote code execution and full server takeover.
+
+- id: php-assert-injection
+  category: vuln
+  name: PHP assert() Code Injection
+  description: Request input passed to assert(), which evaluates a string as PHP (pre-8).
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - assert(
+  regex: assert\s*\([^)]*\$_(?:GET|POST|REQUEST|COOKIE|SERVER)
+  cwe: CWE-95
+  owasp: A03:2021 Injection
+  remediation: Never pass input to assert(); use explicit boolean checks.
+  secure_code: |
+    $ok = in_array($_GET['mode'], ['a', 'b'], true);
+  technical_impact: Arbitrary PHP execution through the asserted expression string.
+  business_impact: Remote code execution and full server compromise.
+
+- id: php-weak-password-hash
+  category: vuln
+  name: PHP Weak Password Hashing
+  description: Password field hashed with md5/sha1 instead of a password KDF.
+  severity: medium
+  languages:
+  - php
+  keywords:
+  - md5
+  - sha1
+  - password
+  regex: (?:md5|sha1)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)\[\s*["\x27]?[^\]]*(?:pass|pwd|secret|token)[^\]]*["\x27]?\s*\]|\$(?:password|passwd|pwd|pass|user_pass)\s*=\s*(?:md5|sha1)\s*\(
+  allowlist:
+    regex:
+    - password_hash
+    - PASSWORD_
+    - hash_hmac
+  cwe: CWE-916
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Hash passwords with password_hash() using bcrypt or Argon2id.
+  secure_code: |
+    $hash = password_hash($_POST['password'], PASSWORD_ARGON2ID);
+  technical_impact: Fast, unsalted hashes are trivially cracked from a DB dump.
+  business_impact: Mass credential compromise after any database leak.
+
+- id: php-unrestricted-file-upload
+  category: vuln
+  name: PHP Unrestricted File Upload
+  description: move_uploaded_file writes using the client-supplied filename without extension control.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - move_uploaded_file
+  - $_FILES
+  regex: move_uploaded_file\s*\([^,]*,\s*[^)]*\$_FILES\[[^\]]*\]\[\s*["\x27]?name["\x27]?
+  allowlist:
+    regex:
+    - pathinfo\(
+    - PATHINFO_EXTENSION
+    - in_array
+  cwe: CWE-434
+  owasp: A04:2021 Insecure Design
+  remediation: Generate a server-side name and allowlist the extension/MIME before saving.
+  secure_code: |
+    $ext = strtolower(pathinfo($_FILES['f']['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, ['jpg','png'], true)) { exit; }
+  technical_impact: Uploads a .php webshell into a web-served directory.
+  business_impact: Remote code execution and full application takeover.
+
+- id: php-parse-str-overwrite
+  category: vuln
+  name: PHP parse_str() Variable Overwrite
+  description: Single-argument parse_str() injects request keys as local variables.
+  severity: high
+  languages:
+  - php
+  keywords:
+  - parse_str
+  regex: parse_str\s*\(\s*[^,()]+\)
+  cwe: CWE-621
+  owasp: A03:2021 Injection
+  remediation: Always pass the second array argument to parse_str().
+  secure_code: |
+    parse_str($_SERVER['QUERY_STRING'], $params);
+  technical_impact: Overwrites in-scope variables (auth flags, config) from the query string.
+  business_impact: Privilege escalation and logic bypass.
+
+- id: php-create-function-injection
+  category: vuln
+  name: PHP create_function Code Injection
+  description: Request input passed to create_function(), which eval-compiles a function body.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - create_function
+  regex: create_function\s*\([^)]*\$_(?:GET|POST|REQUEST|COOKIE)
+  cwe: CWE-94
+  owasp: A03:2021 Injection
+  remediation: Replace create_function with a real closure; never build it from input.
+  secure_code: |
+    $fn = function ($x) { return $x * 2; };
+  technical_impact: Arbitrary PHP execution via the injected function body.
+  business_impact: Remote code execution and full server compromise.
+
+- id: php-sqli-procedural-2arg
+  category: vuln
+  name: PHP SQL Injection via Procedural 2-Arg Query
+  description: Request superglobal concatenated into the query string that is the SECOND arg of mysqli_query/pg_query, or interpolated into $wpdb->query.
+  severity: critical
+  languages:
+  - php
+  keywords:
+  - mysqli_query
+  - pg_query
+  - pg_send_query
+  - $wpdb->
+  - ->query(
+  regex: (?:mysqli_query|mysqli_real_query|pg_query|pg_send_query)\s*\(\s*\$[A-Za-z_]\w*\s*,|\$wpdb->(?:query|get_results|get_var|get_row|get_col)\s*\(
+  context_required:
+  - $_GET
+  - $_POST
+  - $_REQUEST
+  - $_COOKIE
+  - $_SERVER
+  allowlist:
+    regex:
+    - mysqli_prepare
+    - ->prepare\(
+    - \$wpdb->prepare
+  cwe: CWE-89
+  owasp: A03:2021 Injection
+  remediation: Use mysqli_prepare / $wpdb->prepare with bound parameters, never concatenation.
+  secure_code: |
+    $stmt = mysqli_prepare($conn, 'SELECT * FROM t WHERE id = ?');
+    mysqli_stmt_bind_param($stmt, 'i', $_GET['id']);
+  technical_impact: Reads or modifies arbitrary rows and dumps credentials.
+  business_impact: Full database breach across tenants.
+
+- id: node-dynamic-require
+  category: vuln
+  name: Node Dynamic require() of Untrusted Module
+  description: require() receives a non-literal, request-influenced module path.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - require(
+  regex: require\s*\(\s*[^\s"\x27][^)]*\)
+  context_required:
+  - req.
+  - request.
+  - params
+  - query
+  - body
+  - ${
+  - '`'
+  - +
+  allowlist:
+    regex:
+    - require\(\s*[`"\x27]\.
+    - ALLOWED
+  cwe: CWE-98
+  owasp: A03:2021 Injection
+  remediation: Map input through a fixed allowlist object; never require a computed path.
+  secure_code: |
+    const mod = ALLOWED[name];
+    if (!mod) throw new Error('unknown module');
+  technical_impact: Loads arbitrary local files or gadget modules as executable code.
+  business_impact: Remote code execution from user-chosen module names.
+
+- id: node-redos-dynamic-regexp
+  category: vuln
+  name: Node Regex Injection / ReDoS via new RegExp
+  description: new RegExp() built from request input enables injection and catastrophic backtracking.
+  severity: medium
+  languages:
+  - node
+  keywords:
+  - new RegExp
+  - RegExp(
+  regex: new\s+RegExp\s*\(
+  context_required:
+  - req.
+  - request.
+  - params
+  - query
+  - body
+  - +
+  - ${
+  - '`'
+  allowlist:
+    regex:
+    - escapeStringRegexp
+    - escapeRegExp
+    - lodash.escapeRegExp
+  cwe: CWE-1333
+  owasp: A03:2021 Injection
+  remediation: Escape input before RegExp construction or use a fixed literal pattern.
+  secure_code: |
+    const re = new RegExp(escapeStringRegexp(userInput));
+  technical_impact: A crafted pattern hangs the event loop (ReDoS) or alters matching logic.
+  business_impact: Denial of service and filter/authorization bypass.
+
+- id: node-yaml-load-unsafe
+  category: vuln
+  name: Node js-yaml load Without Safe Schema
+  description: js-yaml load() called without an explicit JSON/CORE schema restriction.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - yaml.load
+  - jsyaml.load
+  - js-yaml
+  regex: (?:yaml|jsyaml|jsYaml|YAML)\.load\s*\(|require\s*\(\s*["\x27]js-yaml["\x27]\s*\)\.load\s*\(
+  allowlist:
+    regex:
+    - JSON_SCHEMA
+    - CORE_SCHEMA
+    - FAILSAFE_SCHEMA
+    - safeLoad
+  cwe: CWE-502
+  owasp: A08:2021 Software and Data Integrity Failures
+  remediation: Restrict to JSON_SCHEMA and never load YAML from untrusted sources with custom types.
+  secure_code: |
+    const doc = yaml.load(input, { schema: yaml.JSON_SCHEMA });
+  technical_impact: Custom-type YAML instantiates unexpected objects during parsing.
+  business_impact: Data-integrity compromise and potential code execution.
+
+- id: node-nosql-where-operator
+  category: vuln
+  name: Node NoSQL Injection via $where / $regex
+  description: Mongo $where or $regex operator populated directly from request input.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - $where
+  - $regex
+  regex: '\$where\s*[:=]|["\x27]\$where["\x27]\s*:|\$regex\s*[:=]|["\x27]\$regex["\x27]\s*:'
+  context_required:
+  - req.
+  - request.
+  - params
+  - query
+  - body
+  allowlist:
+    regex:
+    - String\(
+    - sanitize
+    - mongoSanitize
+  cwe: CWE-943
+  owasp: A03:2021 Injection
+  remediation: Cast to String, drop $-prefixed keys, and avoid $where entirely.
+  secure_code: |
+    const user = await User.findOne({ name: String(req.body.name) });
+  technical_impact: $where runs attacker JavaScript in the DB; $regex enables blind extraction.
+  business_impact: Full collection disclosure and auth bypass.
+
+- id: node-shelljs-execa-template
+  category: vuln
+  name: Node Command Injection via shelljs / execa Template
+  description: shelljs.exec or execa command built from a template literal with interpolation.
+  severity: critical
+  languages:
+  - node
+  keywords:
+  - shelljs
+  - execa
+  - .exec(
+  - execaCommand
+  regex: (?:shelljs|shell)\.exec\s*\(\s*`|execa(?:Command|Sync|\.(?:command|sync|commandSync))?\s*\(\s*`
+  context_required:
+  - ${
+  - '`'
+  - req.
+  - params
+  - query
+  - body
+  allowlist:
+    regex:
+    - execFile
+    - execa\(\s*[`"\x27][^`"\x27]+[`"\x27]\s*,\s*\[
+  cwe: CWE-78
+  owasp: A03:2021 Injection
+  remediation: Use the array form (execFile / execa(cmd, [args])); never interpolate into a shell string.
+  secure_code: |
+    execFileSync('convert', [input, output]);
+  technical_impact: Shell metacharacters in input run arbitrary OS commands.
+  business_impact: Remote code execution and host compromise.
+
+- id: node-vm2-usage
+  category: vuln
+  name: Node vm2 Sandbox Usage
+  description: Deprecated vm2 sandbox in use; multiple unpatched sandbox-escape CVEs.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - vm2
+  - NodeVM
+  - new VM
+  regex: require\s*\(\s*["\x27]vm2["\x27]|from\s+["\x27]vm2["\x27]|new\s+(?:VM|NodeVM)\s*\(
+  cwe: CWE-94
+  owasp: A03:2021 Injection
+  remediation: Drop vm2 (unmaintained); use isolated-vm or an out-of-process sandbox with limits.
+  secure_code: |
+    const result = await runInIsolate(expr, { timeout: 50 });
+  technical_impact: Known escapes let sandboxed code reach the host and execute commands.
+  business_impact: Remote code execution on any input evaluated in the sandbox.
+
+- id: node-ssti-res-render
+  category: vuln
+  name: Node SSTI via res.render Dynamic Template
+  description: res.render receives a request-controlled template name or inline source.
+  severity: high
+  languages:
+  - node
+  keywords:
+  - res.render
+  regex: res\.render\s*\(\s*[^"\x27\s)][^,)]*
+  context_required:
+  - req.
+  - request.
+  - params
+  - query
+  - body
+  - ${
+  - '`'
+  cwe: CWE-1336
+  owasp: A03:2021 Injection
+  remediation: Pass a fixed template name; supply user data only through the locals object.
+  secure_code: |
+    res.render('profile', { name: req.query.name });
+  technical_impact: A user-chosen template compiles to server-side code execution.
+  business_impact: Remote code execution via the templating engine.
+
+- id: node-csp-helmet-disabled
+  category: vuln
+  name: Node Content-Security-Policy Disabled
+  description: Helmet configured with contentSecurityPolicy set to false.
+  severity: medium
+  languages:
+  - node
+  keywords:
+  - contentSecurityPolicy
+  regex: contentSecurityPolicy\s*:\s*false
+  cwe: CWE-693
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Keep CSP enabled with an explicit directive allowlist.
+  secure_code: |
+    app.use(helmet({ contentSecurityPolicy: { directives: cspDirectives } }));
+  technical_impact: Removes the browser defense that contains injected script.
+  business_impact: XSS becomes far easier to weaponize into account takeover.
+
+- id: node-xss-protection-header-off
+  category: vuln
+  name: Node X-XSS-Protection Explicitly Disabled
+  description: Response sets X-XSS-Protection to 0, turning off the legacy XSS auditor.
+  severity: low
+  languages:
+  - node
+  keywords:
+  - X-XSS-Protection
+  regex: '["\x27]X-XSS-Protection["\x27]\s*,\s*["\x27]?0'
+  cwe: CWE-693
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Remove the disabling header and rely on a strong Content-Security-Policy.
+  secure_code: |
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+  technical_impact: Disables a defense-in-depth control against reflected XSS.
+  business_impact: Weakened protection increases XSS exploitability.
+
+- id: react-token-in-localstorage
+  category: vuln
+  name: Auth Token Stored in localStorage / sessionStorage
+  description: A token/jwt/secret is written to web storage readable by any script.
+  severity: medium
+  languages:
+  - node
+  - react
+  keywords:
+  - localStorage
+  - sessionStorage
+  - setItem
+  regex: (?:localStorage|sessionStorage)\.setItem\s*\(\s*[`"\x27][^`"\x27]*(?:token|jwt|auth|secret|apikey|api_key|access|refresh|session|password)[^`"\x27]*[`"\x27]
+  cwe: CWE-922
+  owasp: A02:2021 Cryptographic Failures
+  remediation: Store session tokens in HttpOnly, Secure, SameSite cookies, not web storage.
+  secure_code: |
+    // set by server: Set-Cookie: session=...; HttpOnly; Secure; SameSite=Strict
+  technical_impact: Any XSS reads the token directly from storage.
+  business_impact: Session theft and account takeover on a single script injection.
+
+- id: react-target-blank-no-noopener
+  category: vuln
+  name: target=_blank Without rel=noopener
+  description: A _blank link lacks rel=noopener, exposing window.opener to reverse tabnabbing.
+  severity: low
+  languages:
+  - react
+  - html
+  keywords:
+  - _blank
+  regex: target\s*=\s*[{"\x27]?_blank
+  allowlist:
+    regex:
+    - noopener
+    - noreferrer
+  cwe: CWE-1022
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Add rel="noopener noreferrer" to every target=_blank link.
+  secure_code: |
+    <a href={url} target="_blank" rel="noopener noreferrer">link</a>
+  technical_impact: The opened page can redirect the opener tab via window.opener.
+  business_impact: Phishing / credential theft through tab hijacking.
+
+- id: react-href-user-open-redirect
+  category: vuln
+  name: React href Bound to User Input (Client Open Redirect)
+  description: An href JSX expression is set from props/state/query without same-origin validation.
+  severity: medium
+  languages:
+  - react
+  keywords:
+  - href
+  regex: href\s*=\s*\{\s*[^}]*(?:props\.|state\.|query|params|location\.(?:search|href|hash)|redirect|returnUrl|next|url)[^}]*\}
+  allowlist:
+    regex:
+    - startsWith\(
+    - new URL
+    - sanitizeUrl
+  cwe: CWE-601
+  owasp: A01:2021 Broken Access Control
+  remediation: Only allow relative paths or an allowlisted origin before assigning href.
+  secure_code: |
+    const safe = url.startsWith('/') ? url : '/';
+    return <a href={safe}>continue</a>;
+  technical_impact: Sends users to an attacker-chosen destination from a trusted link.
+  business_impact: Phishing and OAuth-token theft via redirect abuse.
+
+- id: xml-inline-doctype-system-entity
+  category: vuln
+  name: Inline DOCTYPE / External Entity Declaration
+  description: A data/template file declares a DOCTYPE or ENTITY referencing a SYSTEM resource.
+  severity: high
+  languages:
+  - xml
+  - html
+  keywords:
+  - <!DOCTYPE
+  - <!ENTITY
+  - SYSTEM
+  regex: <!DOCTYPE[^>]*\s(?:SYSTEM|PUBLIC)\b|<!ENTITY\s+\S+\s+SYSTEM\b|<!ENTITY\s+%\s+\S+\s+SYSTEM\b
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Remove inline DOCTYPEs and disable DTD/entity loading in the parser.
+  secure_code: |
+    <!-- no DOCTYPE; parser configured to reject DTDs -->
+  technical_impact: External entities read local files and reach internal URLs (XXE).
+  business_impact: Secret disclosure and SSRF into internal infrastructure.
+
+- id: xml-xinclude-usage
+  category: vuln
+  name: XML XInclude Usage
+  description: Document declares the XInclude namespace or an xi:include element.
+  severity: medium
+  languages:
+  - xml
+  keywords:
+  - XInclude
+  - xi:include
+  regex: xmlns:xi\s*=\s*["\x27]http://www\.w3\.org/2001/XInclude["\x27]|<xi:include\b
+  cwe: CWE-611
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable XInclude processing unless the source is fully trusted.
+  secure_code: |
+    <!-- parse with XInclude disabled; do not use xi:include on untrusted input -->
+  technical_impact: xi:include pulls in local files or remote URLs, mirroring XXE file read.
+  business_impact: Local file disclosure and SSRF.
+
+- id: xml-billion-laughs-entity
+  category: vuln
+  name: XML Entity Expansion (Billion Laughs)
+  description: An entity value references other entities, enabling exponential expansion DoS.
+  severity: medium
+  languages:
+  - xml
+  keywords:
+  - <!ENTITY
+  regex: <!ENTITY\s+\S+\s+["\x27](?:[^"\x27]*&\S+;){2,}
+  cwe: CWE-776
+  owasp: A05:2021 Security Misconfiguration
+  remediation: Disable DTDs / cap entity expansion in the XML parser.
+  secure_code: |
+    <!-- disable DTD processing; enforce an entity-expansion limit -->
+  technical_impact: Nested entity expansion exhausts memory and CPU parsing the document.
+  business_impact: Denial of service against any XML-ingesting endpoint.
+
+- id: xml-xslt-dangerous-function
+  category: vuln
+  name: XSLT document() / php:function Extension
+  description: Stylesheet uses the php:xsl namespace, php:function, or document() calls.
+  severity: high
+  languages:
+  - xml
+  keywords:
+  - php:function
+  - http://php.net/xsl
+  - 'xsl:'
+  - document(
+  regex: xmlns:php\s*=\s*["\x27]http://php\.net/xsl["\x27]|php:function\s*\(|<xsl:[^>]*\bdocument\s*\(|select\s*=\s*["\x27][^"\x27]*document\s*\(
+  cwe: CWE-94
+  owasp: A03:2021 Injection
+  remediation: Disable extension functions and network/document() access in the XSLT processor.
+  secure_code: |
+    <!-- load the stylesheet without php:function or document(); disable extensions -->
+  technical_impact: php:function reaches native PHP (RCE); document() enables file read/SSRF.
+  business_impact: Remote code execution and internal resource disclosure.

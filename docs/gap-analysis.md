@@ -48,6 +48,21 @@ keywords: [scan4secrets gap analysis, v1 vs v2, false positive rate, defect mapp
 | 34 | No pre-commit hook | Couldn't be gated | `.pre-commit-hooks.yaml` ships |
 | 35 | README oversold "400+ rules" | Marketing vs reality | Honest count + a comparison table vs gitleaks/trufflehog/detect-secrets |
 
+## Beyond secrets — SAST vulnerability & misconfiguration scanning
+
+gitleaks, trufflehog, and detect-secrets are secret-only scanners. scan4secrets also carries a SAST vulnerability/misconfiguration engine (`--misconfig` / `--misconfig-only`) — 223 vulnerability/misconfiguration rules across 17 languages/formats, each finding carrying a CWE, an OWASP mapping, and paired vulnerable/secure code plus remediation.
+
+| Capability | gitleaks | trufflehog | detect-secrets | scan4secrets |
+|---|---|---|---|---|
+| Secret detection | Yes | Yes | Yes | Yes |
+| Vulnerability/misconfig SAST (SQLi, cmd injection, SSTI, XXE, deserialization, SSRF, XSS, weak crypto, JWT flaws, …) | No | No | No | Yes (`--misconfig`) |
+| IaC/config misconfig (Terraform, Kubernetes, Dockerfile, GitHub Actions, web.config, WCF/SOAP) | No | No | No | Yes |
+| CWE + OWASP mapping per finding | No | No | No | Yes |
+| Secure-code remediation per finding | No | No | No | Yes |
+| Structural secret detection (nested XML, split key/value, JSON key/value, multi-line YAML/properties, Base64) | No | No | No | Yes |
+
+The structural-detection edge matters most where secrets do not sit on a single `name = value` line: nested XML tags, split `<key>`/`<value>` pairs, JSON key/value objects, multi-line YAML/properties, and Base64-encoded values are all caught by a whole-file pass that keyword/line-oriented scanners miss.
+
 ## What's still on the roadmap (v2.1+)
 
 These are intentionally deferred from v2.0:

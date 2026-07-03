@@ -1195,7 +1195,155 @@
   keywords: ["BEGIN OPENSSH PRIVATE KEY"]
   regex: '(-----BEGIN OPENSSH PRIVATE KEY-----)'
 
+# =================== Additional common tokens (prefix-anchored) ===================
+
+- id: slack-app-token
+  description: Slack app-level token (xapp-)
+  severity: high
+  keywords: ["xapp-"]
+  regex: '\b(xapp-[0-9]-[A-Z0-9]+-[0-9]+-[a-f0-9]{32,})\b'
+
+- id: slack-user-token
+  description: Slack user/legacy OAuth token (xoxp-/xoxe-)
+  severity: high
+  keywords: ["xoxp-", "xoxe-"]
+  regex: '\b(xox[pe]-[0-9]{10,13}-[0-9]{10,13}-[0-9]{10,13}-[a-f0-9]{32})\b'
+
+- id: dropbox-access-token
+  description: Dropbox short-lived / OAuth2 access token (sl.)
+  severity: high
+  keywords: ["sl.", "dropbox"]
+  regex: '\b(sl\.[A-Za-z0-9_-]{100,})\b'
+  entropy_min: 3.5
+
+- id: planetscale-password
+  description: PlanetScale database password
+  severity: high
+  keywords: ["pscale_pw_"]
+  regex: '\b(pscale_pw_[A-Za-z0-9_.-]{32,})\b'
+
+- id: planetscale-token
+  description: PlanetScale service token
+  severity: high
+  keywords: ["pscale_tkn_"]
+  regex: '\b(pscale_tkn_[A-Za-z0-9_.-]{32,})\b'
+
+- id: posthog-project-key
+  description: PostHog project API key (phc_)
+  severity: medium
+  keywords: ["phc_"]
+  regex: '\b(phc_[A-Za-z0-9]{40,})\b'
+
+- id: supabase-service-token
+  description: Supabase personal access / service token (sbp_)
+  severity: high
+  keywords: ["sbp_"]
+  regex: '\b(sbp_[a-f0-9]{40,})\b'
+
+- id: figma-pat
+  description: Figma personal access token (figd_)
+  severity: high
+  keywords: ["figd_"]
+  regex: '\b(figd_[A-Za-z0-9_-]{40,})\b'
+
+- id: gitlab-pipeline-trigger-token
+  description: GitLab pipeline trigger token (glptt-)
+  severity: medium
+  keywords: ["glptt-"]
+  regex: '\b(glptt-[0-9a-f]{40})\b'
+
+- id: gitlab-runner-token
+  description: GitLab runner authentication token (glrt-)
+  severity: high
+  keywords: ["glrt-"]
+  regex: '\b(glrt-[0-9A-Za-z_-]{20,})\b'
+
+- id: stripe-secret-test
+  description: Stripe test-mode secret key (sk_test_)
+  severity: low
+  keywords: ["sk_test_"]
+  regex: '\b(sk_test_[0-9a-zA-Z]{24,})\b'
+
+- id: google-oauth-refresh-token
+  description: Google OAuth refresh token (1//)
+  severity: high
+  keywords: ["1//"]
+  regex: '\b(1//[0-9A-Za-z_-]{30,})\b'
+  entropy_min: 3.5
+
+- id: twitch-oauth-token
+  description: Twitch IRC/OAuth token (oauth:)
+  severity: medium
+  keywords: ["oauth:"]
+  regex: '\b(oauth:[a-z0-9]{30})\b'
+
+- id: ngrok-authtoken
+  description: ngrok agent authtoken
+  severity: medium
+  keywords: ["ngrok"]
+  regex: '\b([0-9A-Za-z]{20,26}_[0-9A-Za-z]{20,50})\b'
+  entropy_min: 3.8
+  allowlist:
+    regex:
+      - '(?i)example|dummy|xxx+'
+
 # =================== Generic catch-alls (last resort) ===================
+
+- id: env-named-credential-assignment
+  description: Credential-named env/config variable assigned a value (.env / shell / dotenv style)
+  severity: medium
+  # The ALL-CAPS credential-named key IS the signal here — no entropy floor, so
+  # low-entropy real secrets (client secrets, session keys) are not silently dropped.
+  keywords: ["SECRET", "TOKEN", "PASSWORD", "PASSWD", "APIKEY", "API_KEY", "PRIVATE_KEY", "ACCESS_KEY", "PASSPHRASE", "CREDENTIAL", "ENCRYPTION_KEY"]
+  regex: '(?m)^[ \t]*(?:export[ \t]+)?[A-Z0-9_]*(?:SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|PRIVATE_KEY|ACCESS_KEY|ENCRYPTION_KEY|PASSPHRASE|CREDENTIAL|TOKEN)[A-Z0-9_]*[ \t]*=[ \t]*["'']?([^\s"''#]{4,})'
+  entropy_min: 0.0
+  allowlist:
+    regex:
+      # non-secret keys that merely contain a credential word
+      - '(?i)^[ \t]*(?:export[ \t]+)?[A-Z0-9_]*(?:URL|URI|ENDPOINT|HOST|PORT|_ID|FILE|PATH|_NAME|REGION|TTL|ENABLED|DISABLED|LENGTH|EXPIR|_TYPE|VERSION|PUBLIC|COUNT|TIMEOUT|HEADER|PREFIX|FIELD|PARAM|COOKIE|METHOD|ALGO)[ \t]*='
+      # non-secret VALUES: urls, absolute paths, pure numbers, booleans, placeholders
+      - '(?i)=\s*["'']?https?://'
+      - '(?i)=\s*["'']?/[^\s"'']*\s*$'
+      - '(?i)=\s*["'']?\d+\s*$'
+      - '(?i)=\s*["'']?(?:changeme|change_me|example|placeholder|redacted|dummy|sample|test|xxx+|none|null|true|false|undefined|empty|default|disabled|enabled)\b'
+      - '<[^>]*>'
+      - '\{\{[^}]*\}\}'
+      - '(?i)your[_\-]?(?:api[_\-]?key|token|secret|password)'
+      - '\$\{?[A-Za-z_][A-Za-z0-9_]*\}?'
+      - '(?i)process\.env\.'
+      - '(?i)os\.(?:getenv|environ)'
+    paths:
+      - "**/*.md"
+      - "**/*.rst"
+      - "**/*.example"
+      - "**/*.sample"
+      - "**/*.dist"
+      - "**/*.template"
+
+- id: basic-auth-credential
+  description: HTTP Basic auth credential assigned in code/config (basic_auth = "...")
+  severity: medium
+  keywords: ["basic_auth", "basicauth", "basic-auth", "basicAuth"]
+  regex: '(?i)basic[_\-]?auth\s*[:=]\s*["'']([^"''\s]{6,})["'']'
+  entropy_min: 0.0
+  allowlist:
+    regex:
+      - '(?i)["''](?:true|false|none|null|example|placeholder|changeme|xxx+)["'']'
+      - '\$\{?[A-Za-z_][A-Za-z0-9_]*\}?'
+
+- id: xml-secret-bearing-tag
+  description: Base64/high-entropy value inside a secret-bearing XML tag (SAML AttributeValue, config <value>, etc.)
+  severity: low
+  keywords: ["<AttributeValue", "<value>", "<Password", "<ClientSecret", "<SecretString", "<PrivateKey", "<Token", "<SharedSecret", "<Credential"]
+  regex: '(?i)<(?:AttributeValue|value|Password|ClientSecret|SecretString|PrivateKey|Token|SharedSecret|Credential)[^>]*>\s*([A-Za-z0-9+/=_\-]{16,})\s*</'
+  entropy_min: 3.2
+  allowlist:
+    regex:
+      - '(?i)>\s*(?:true|false|null|none|example|placeholder|changeme|urn:|https?:)'
+    paths:
+      - "**/*.md"
+      - "**/*.example"
+      - "**/*.sample"
 
 - id: generic-high-entropy-quoted
   description: Quoted high-entropy value next to credential-sounding name

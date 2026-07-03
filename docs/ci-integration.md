@@ -69,6 +69,44 @@ jobs:
           path: reports/
 ```
 
+## GitHub Actions. Secrets + vulnerabilities (SAST `--misconfig`)
+
+Scan for both secrets and code vulnerabilities/misconfigurations so vulnerability findings (with CWE and OWASP mappings) also land in your code-scanning dashboard.
+
+```yaml
+# .github/workflows/sast.yml
+name: SAST secrets + vulns
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install git+https://github.com/m14r41/scan4secrets
+      - name: scan4secrets (secrets + misconfig)
+        run: |
+          scan4secrets --path . \
+            --misconfig \
+            --report sarif \
+            --fail-on high \
+            --output results
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+```
+
+Use `--misconfig-only` to scan for vulnerabilities/misconfigurations without secret detection.
+
 ## GitHub Actions. Scheduled DAST on staging
 
 ```yaml
@@ -160,4 +198,4 @@ docker run --rm -v "$PWD:/scan" ghcr.io/m14r41/scan4secrets:latest \
 - **Cache** the install: `pip install scan4secrets` is < 2s after first run on a warm runner.
 - **Restrict on PR**: scan only the diff for speed. `git diff --name-only main...HEAD | xargs -I{} scan4secrets --path {} --report json`.
 - **Don't `--verify` on third-party tokens you don't own**. See [Verification › Operational notes](./verification#operational-notes).
-- **Redaction** is on by default. Reports are safe to upload to artifact stores. Use `--unsafe-show` only behind access control.
+- Secret values are shown **in full by default** (vendor-PoC friendly). Pass `--mask` to redact them before uploading reports to shared artifact stores.

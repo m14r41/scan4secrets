@@ -1,10 +1,12 @@
 # scan4secrets
 
-**DAST + SAST secret scanner with live verification, source-map parsing, and CI-native reporting — plus a SAST vulnerability & misconfiguration engine.**
+**DAST + SAST secret scanner with live verification, source-map parsing, and CI-native reporting  plus a SAST vulnerability & misconfiguration engine.**
 
-Find leaked credentials in source trees, running web apps, and CI logs. Verify them live against vendor APIs. Scan the same source trees for code vulnerabilities and misconfigurations. Output SARIF for code-scanning dashboards, JSONL for SOAR pipelines, or Excel/PDF/HTML for client reports.
+> Find leaked credentials in source trees, running web apps, and CI logs. Verify them live against vendor APIs. Scan the same source trees for code vulnerabilities and misconfigurations. Output SARIF for code-scanning dashboards, JSONL for SOAR pipelines, or Excel/PDF/HTML for client reports.
 
 ---
+
+<img width="2172" height="724" alt="scan4secrets" src="https://github.com/user-attachments/assets/b2727271-b7b7-46ad-8e6b-b6c88bccb693" />
 
 ## Why scan4secrets
 
